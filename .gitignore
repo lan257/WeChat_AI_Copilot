@@ -1,0 +1,24 @@
+# Local credentials and runtime data
+.env
+.env.*
+!.env.example
+!.env.*.example
+.local/
+
+# .NET build and test output
+**/bin/
+**/obj/
+TestResults/
+*.user
+*.suo
+*.log
+
+# Python local environments and caches
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# IDE state
+.vs/
+.idea/
