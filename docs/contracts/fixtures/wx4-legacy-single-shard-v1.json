@@ -1,0 +1,12 @@
+{
+  "fixtureName": "wx4-legacy-single-shard-v1",
+  "scope": "Compatibility evidence is limited to a single shard.",
+  "input": {
+    "accountExternalId": "sample-account",
+    "conversationExternalId": "sample-contact",
+    "localId": "58",
+    "sortSeq": "90001"
+  },
+  "stableKeyUtf8": "sample-account|sample-contact|58|90001",
+  "externalMessageId": "wx4:cde6f87071b0390f847eedecfb2c5a4825ef2a3b49c2da85c9b413b0444a5925"
+}

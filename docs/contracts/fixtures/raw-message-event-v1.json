@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "provider": "local-wechat",
+  "sourceKind": "Realtime",
+  "accountExternalId": "sample-account",
+  "conversationExternalId": "sample-contact",
+  "conversationType": "Direct",
+  "messageType": "Text",
+  "text": "示例文本",
+  "sourceOccurredAt": "2026-10-09T02:00:00Z",
+  "rawSenderId": "73",
+  "identityNamespace": "message-table-and-shard-scope",
+  "sourceIdentity": {
+    "localId": "58",
+    "sortSeq": "90001",
+    "serverId": null,
+    "shardFingerprint": "sample-shard",
+    "messageTable": "example-table"
+  },
+  "externalMessageId": null,
+  "direction": "Unknown",
+  "directionEvidence": "Unresolved"
+}

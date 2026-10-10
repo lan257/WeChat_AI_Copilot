@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="light" />
+  <meta name="theme-color" content="#f5f8f7" />
+  <title>知间 · 微信 AI 沟通助手</title>
+  <link rel="stylesheet" href="styles.css?v=20261010-3" />
+  <script defer src="app.js?v=20261010-3"></script>
+</head>
+<body>
+  <div id="app" class="app-shell">
+    <header class="app-header">
+      <a class="brand" href="/" aria-label="知间工作区">
+        <span class="brand-mark" aria-hidden="true">知</span>
+        <span class="brand-copy">
+          <span class="brand-name">知间 <span>· 微信 AI 沟通助手</span></span>
+          <span class="brand-tagline">PRIVATE CONVERSATION COPILOT</span>
+        </span>
+      </a>
+
+      <nav class="mode-switch" aria-label="界面模式">
+        <button type="button" class="mode-button is-active" data-mode="workspace" aria-pressed="true">工作区</button>
+        <button type="button" class="mode-button" data-mode="minimal" aria-pressed="false">极简模式</button>
+      </nav>
+
+      <div class="service-indicator" id="serviceIndicator" role="status">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span id="serviceIndicatorText">等待授权</span>
+      </div>
+    </header>
+
+    <div id="workspaceView" class="workspace-layout">
+      <aside class="sidebar" aria-label="工作区导航">
+        <div class="sidebar-label">工作台</div>
+        <nav class="side-nav">
+          <button type="button" class="side-link is-current" data-page="chat" aria-current="page"><span class="nav-icon" aria-hidden="true">◫</span>聊天与 AI</button>
+          <button type="button" class="side-link" data-page="connection"><span class="nav-icon" aria-hidden="true">⌁</span>接入与会话</button>
+          <button type="button" class="side-link" data-page="memory"><span class="nav-icon" aria-hidden="true">◇</span>记忆与资料</button>
+          <span class="side-link is-unavailable" aria-disabled="true"><span class="nav-icon" aria-hidden="true">✳</span>AI 与 Skills <small>待接入</small></span>
+          <span class="side-link is-unavailable" aria-disabled="true"><span class="nav-icon" aria-hidden="true">▤</span>系统状态 <small>待接入</small></span>
+        </nav>
+        <div class="sidebar-note">
+          <span class="note-mark" aria-hidden="true">i</span>
+          <p>聊天、记忆和身份方向只在授权读取后显示；AI 功能状态以服务端配置与响应为准。</p>
+        </div>
+      </aside>
+
+      <main id="mainContent" class="main-content">
+        <section id="chatPage" class="workspace-page" aria-labelledby="chatPageTitle">
+        <div class="page-heading">
+          <div>
+            <div class="eyebrow">CONVERSATION WORKSPACE</div>
+            <h1 id="chatPageTitle">聊天工作区</h1>
+            <p>同屏查看当前会话，并在侧边讨论沟通想法。</p>
+          </div>
+          <button type="button" class="button button-soft" data-mode="minimal" aria-label="切换到极简模式">
+            <span aria-hidden="true">↗</span> 进入极简模式
+          </button>
+        </div>
+
+        <div class="chat-page-tools" aria-label="当前会话">
+          <div class="chat-selected">
+            <div class="session-avatar" aria-hidden="true">知</div>
+            <div class="chat-selected-copy">
+              <strong id="chatSessionValue">等待授权读取当前会话</strong>
+              <span id="chatSessionType">服务器授权范围固定，不由此页切换</span>
+            </div>
+          </div>
+          <span id="chatCaptureStatus" class="pill pill-pending">等待授权</span>
+          <label class="sr-only" for="chatConversationSelect">当前授权会话</label>
+          <select id="chatConversationSelect" class="field select" disabled>
+            <option id="chatConversationOption">等待授权读取</option>
+          </select>
+        </div>
+
+        <div class="conversation-grid">
+          <section class="panel chat-panel" aria-labelledby="chatPanelTitle">
+            <div class="panel-heading">
+              <div>
+                <h2 id="chatPanelTitle"><span class="heading-icon chat-icon" aria-hidden="true">◫</span>聊天记录</h2>
+                <p>当前会话的只读消息上下文</p>
+              </div>
+              <span id="messageStatusPill" class="pill pill-muted">等待授权</span>
+            </div>
+
+            <div class="message-area" aria-live="polite">
+              <div class="empty-state" id="messageState">
+                <div class="empty-illustration" aria-hidden="true"><span></span><span></span><span></span></div>
+                <h3>尚未读取聊天记录</h3>
+                <p>请先在“接入与会话”完成授权读取。当前页面没有预置或模拟聊天内容。</p>
+              </div>
+            </div>
+
+            <div class="suggestion-area">
+              <div class="suggestion-heading">
+                <div><h3><span class="sparkle" aria-hidden="true">✳</span>回复建议</h3><p>点击单条建议复制，之后由你在微信手动粘贴</p></div>
+                <span id="suggestionStatus" class="pill pill-muted">等待授权</span>
+              </div>
+              <div id="suggestionState" class="suggestion-unavailable" role="status">
+                <span class="unavailable-icon" aria-hidden="true">…</span>
+                <span><strong id="suggestionStateTitle">等待授权</strong><small id="suggestionStateDetail">完成授权并读取服务器人设目录后，才能请求建议。</small></span>
+              </div>
+              <div id="suggestionList" class="work-choice-list" aria-live="polite"></div>
+              <div class="suggestion-controls" aria-label="建议控制项">
+                <label class="sr-only" for="personaSelect">人设预设</label>
+                <select id="personaSelect" class="persona-select" disabled aria-describedby="personaHelp">
+                  <option>等待服务器人设目录</option>
+                </select>
+                <button id="reloadPersonas" type="button" class="button button-secondary" hidden>重试人设目录</button>
+                <button id="generateSuggestions" type="button" class="button button-soft" disabled>生成三条建议</button>
+                <span id="personaHelp" class="control-help">人设列表来自服务端配置</span>
+                <span id="suggestionFeedback" class="suggestion-feedback" role="status" aria-live="polite"></span>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel consult-panel" aria-labelledby="consultPanelTitle">
+            <div class="panel-heading">
+              <div>
+                <h2 id="consultPanelTitle"><span class="heading-icon consult-icon" aria-hidden="true">✳</span>AI 自由咨询</h2>
+                <p>围绕当前会话进行分析与讨论</p>
+              </div>
+              <span id="consultationStatus" class="pill pill-muted">等待授权</span>
+            </div>
+            <div class="consult-body">
+              <div class="consult-welcome">
+                <span class="consult-orb" aria-hidden="true">✳</span>
+                <h3>有想法时，可以在这里展开讨论</h3>
+                <p>咨询会绑定当前服务器授权会话，历史记录从服务端恢复。</p>
+              </div>
+              <div id="consultationTurns" class="agent-dialog" aria-live="polite">
+                <div class="consultation-empty"><strong>尚无咨询记录</strong><span>提交问题后会创建或恢复当前会话的咨询线程。</span></div>
+              </div>
+            </div>
+            <form id="consultationForm" class="consult-compose">
+              <label class="sr-only" for="consultQuestion">向 AI 咨询</label>
+              <textarea id="consultQuestion" rows="3" disabled maxlength="4000" placeholder="输入希望咨询的问题"></textarea>
+              <div class="agent-send-bar">
+                <span id="consultationHint">仅提交给 AI 咨询，不会发送微信消息</span>
+                <button id="consultSubmit" type="submit" class="button button-soft" disabled>提交给 AI</button>
+              </div>
+              <p id="consultationNotice" class="consultation-notice" role="status" aria-live="polite">请先在“接入与会话”完成授权读取。</p>
+            </form>
+          </section>
+        </div>
+        </section>
+
+        <section id="connectionPage" class="workspace-page" aria-labelledby="connectionPageTitle" hidden>
+          <div class="page-heading">
+            <div>
+              <div class="eyebrow">ACCOUNT & CONVERSATION</div>
+              <h1 id="connectionPageTitle">接入与会话</h1>
+              <p>显示服务端配置的当前授权会话与采集状态。此页不选择或更改采集目标。</p>
+            </div>
+          </div>
+
+          <div class="selection-card connection-selection-card">
+            <form id="webAuthForm" class="auth-bar" autocomplete="off">
+              <label class="auth-label" for="webToken">Web Bearer token 值</label>
+              <input id="webToken" class="auth-token" type="password" autocomplete="new-password" spellcheck="false" placeholder="粘贴 Authentication:WebBearerToken 配置值，不含 Bearer 前缀" />
+              <button id="connectApi" type="submit" class="button button-soft">连接并读取</button>
+              <button id="clearApi" type="button" class="auth-clear">清除</button>
+              <span id="apiStatus" class="auth-status" data-state="idle" role="status" aria-live="polite">token 仅保存在当前页面内存；提交后输入框会清空，不写入浏览器存储。</span>
+            </form>
+
+            <section class="session-bar" aria-label="服务器当前授权会话">
+              <div class="session-avatar" aria-hidden="true">知</div>
+              <div class="session-meta">
+                <span class="session-title">当前授权会话</span>
+                <span id="currentSessionValue" class="session-value">等待授权读取当前会话</span>
+              </div>
+              <span id="currentSessionStatus" class="pill pill-pending"><span class="pill-dot" aria-hidden="true"></span>等待授权</span>
+              <label class="sr-only" for="conversationSelect">当前服务端会话</label>
+              <select id="conversationSelect" class="conversation-select" disabled aria-describedby="selectionHelp">
+                <option id="conversationOption">等待授权读取</option>
+              </select>
+              <span id="selectionHelp" class="sr-only">会话范围由服务器配置，页面不能更改。</span>
+            </section>
+          </div>
+
+          <section class="status-card capture-card" aria-labelledby="captureStateTitle">
+            <div class="status-card-heading">
+              <span class="status-icon" aria-hidden="true">◎</span>
+              <div><p class="eyebrow">CAPTURE STATUS</p><h2 id="captureStateTitle">采集状态</h2></div>
+            </div>
+            <dl class="status-list">
+              <div><dt>服务器返回状态</dt><dd id="captureStateValue">等待授权读取</dd></div>
+            </dl>
+            <p class="status-note">页面只显示当前授权目标的状态；切换页面或预览身份不会更改采集目标。</p>
+          </section>
+
+          <details id="perspective" class="identity-preview">
+            <summary>
+              <span class="identity-summary-icon" aria-hidden="true">⇄</span>
+              <span class="identity-summary-copy"><strong>发送者身份校准</strong><small id="perspectiveSummary">等待读取方向状态</small></span>
+              <span id="perspectiveStatus" class="identity-summary-status">等待授权</span>
+            </summary>
+            <div class="identity-content">
+              <p id="identityHelp">授权读取后展示当前会话的身份范围。交换预览只改变页面标签；只有点击确认按钮并确认摘要后才会提交校准。</p>
+              <div class="identity-pair" aria-live="polite">
+                <div class="identity-side"><span>本人预览</span><strong data-identity="self">等待授权读取</strong></div>
+                <span class="identity-arrows" aria-hidden="true">⇄</span>
+                <div class="identity-side"><span>联系人预览</span><strong data-identity="contact">等待授权读取</strong></div>
+              </div>
+              <div class="identity-actions">
+                <button type="button" class="button button-secondary" id="swapPreview" disabled>交换预览候选</button>
+                <button type="button" class="button button-soft" id="confirmPerspective" disabled>确认身份校准</button>
+                <span id="previewState" class="local-only-label">尚无可比较身份候选</span>
+              </div>
+              <div id="confirmHelp" class="confirm-help" role="status">需先读取到唯一且可比较的身份范围。</div>
+            </div>
+          </details>
+        </section>
+
+        <section id="memoryPage" class="workspace-page" aria-labelledby="memoryPageTitle" hidden>
+          <div class="page-heading">
+            <div>
+              <div class="eyebrow">MEMORY & CONTEXT</div>
+              <h1 id="memoryPageTitle">记忆与资料</h1>
+              <p>维护当前服务器会话范围内的人工记忆；无聊天证据的条目会明确标为用户备注。</p>
+            </div>
+          </div>
+          <div class="memory-session-summary">
+            <span class="session-avatar" aria-hidden="true">知</span>
+            <div><span class="session-title">当前授权会话</span><strong id="memoryCurrentSession">等待授权读取</strong></div>
+          </div>
+
+        <section id="memory" class="memory-section" aria-labelledby="memoryTitle">
+          <div class="card memory-card-shell">
+            <div class="card-head memory-heading">
+              <div>
+                <h2 id="memoryTitle">可维护记忆</h2>
+                <p>范围由服务端限定为当前账号与会话。没有聊天证据的人工条目会标成“用户备注”。</p>
+              </div>
+              <div class="memory-heading-actions">
+                <span id="memoryStatus" class="pill pill-muted">等待授权</span>
+                <button id="reloadMemories" type="button" class="button button-secondary" disabled>重新读取</button>
+              </div>
+            </div>
+            <div id="memoryFeedback" class="memory-feedback" role="status" aria-live="polite">请先在“接入与会话”完成授权读取。</div>
+            <div class="memory-layout">
+              <form id="memoryCreateForm" class="memory-create-form">
+                <h3>添加用户备注</h3>
+                <p class="memory-form-note">这是人工录入内容；未关联消息证据时会明确标成用户备注，不当作聊天事实。</p>
+                <fieldset id="memoryCreateFields" disabled>
+                  <label class="memory-field-label" for="memorySubjectType">归属对象</label>
+                  <select id="memorySubjectType" class="memory-field">
+                    <option value="Contact">联系人</option>
+                    <option value="WechatAccount">本人账号</option>
+                  </select>
+
+                  <label class="memory-field-label" for="memoryText">记忆内容 <span>最多 4,000 字符</span></label>
+                  <textarea id="memoryText" class="memory-field memory-textarea" rows="4" maxlength="8000" required placeholder="写下需要保留的事实、偏好或背景；请注明这是人工备注"></textarea>
+
+                  <div class="memory-field-row">
+                    <div>
+                      <label class="memory-field-label" for="memoryCategory">分类 <span>可选</span></label>
+                      <input id="memoryCategory" class="memory-field" maxlength="200" placeholder="例如：偏好、计划" />
+                    </div>
+                    <div>
+                      <label class="memory-field-label" for="memoryObservedAt">相关时间 <span>可选</span></label>
+                      <input id="memoryObservedAt" class="memory-field" type="datetime-local" />
+                    </div>
+                  </div>
+                  <button id="createMemoryButton" type="submit" class="button button-soft memory-submit">保存为用户备注</button>
+                </fieldset>
+              </form>
+
+              <div class="memory-items-area">
+                <div class="memory-items-heading">
+                  <h3>当前会话记忆</h3>
+                  <span id="memoryCount" class="micro">尚未读取</span>
+                </div>
+                <div id="memoryItemsState" class="memory-items-state">等待授权读取。</div>
+                <div id="memoryList" class="memory-list" aria-live="polite"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+        </section>
+      </main>
+    </div>
+
+    <main id="minimalView" class="minimal-view" hidden>
+      <section class="minimal-card" aria-label="极简回复建议">
+        <div class="minimal-top">
+          <button type="button" class="expand-button" id="expandMinimal" aria-expanded="false" aria-controls="minimalDetails">
+            <span class="expand-chevron" aria-hidden="true">⌄</span>展开
+          </button>
+          <span id="minimalStatus" class="minimal-status"><span class="status-dot" aria-hidden="true"></span>等待授权</span>
+        </div>
+
+        <div id="minimalSuggestionState" class="minimal-suggestion-state">请先在“接入与会话”完成授权并加载人设目录。</div>
+        <div id="minimalChoices" class="minimal-choices" aria-label="回复建议"></div>
+
+        <div class="minimal-controls">
+          <button type="button" id="minimalPersonaButton" class="minimal-control persona-control" disabled><span aria-hidden="true">◉</span><span id="minimalPersonaLabel">人设 · 等待服务</span></button>
+          <button type="button" id="minimalRefresh" class="minimal-control refresh-control" disabled><span aria-hidden="true">↻</span>换一批</button>
+        </div>
+
+        <div id="minimalDetails" class="minimal-details" hidden>
+          <div class="minimal-detail-row"><span>当前会话</span><strong id="minimalCurrentSession">等待授权读取</strong></div>
+          <p>极简模式使用与聊天页相同的服务器授权会话和建议状态。接入前不会显示演示消息或虚构建议。</p>
+          <button type="button" class="button button-soft return-workspace" data-mode="workspace">返回工作区</button>
+        </div>
+      </section>
+    </main>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  </div>
+  <noscript><p class="noscript-note">此界面需要启用 JavaScript 才能切换工作区和极简模式。</p></noscript>
+</body>
+</html>

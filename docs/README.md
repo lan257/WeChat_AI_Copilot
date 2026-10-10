@@ -6,5 +6,6 @@
 - [总体架构](design/WeChat_AI_Copilot_Module_Design_v1/Overall_Architecture_Reference.md)
 - [共享契约](design/WeChat_AI_Copilot_Module_Design_v1/00_Shared_Contracts.md)
 - [并行开发计划](design/WeChat_AI_Copilot_Module_Design_v1/Parallel_Development_Plan.md)
-
-可行性验证源码、测试、运行数据与报告单独保存在工作区的 `poc-reference` 仓库，不纳入本项目解决方案或发布内容。
+- [本机开发与运行手册](operations/Local_Operations_Guide.md)：启动、Reader、数据库备份恢复和已知限制。
+- [模块接口清单](operations/Module_Interface_Inventory.md)：HTTP 接口、模块责任和调用边界。
+- [正式项目开发状态](operations/Development_Status.md)：当前阶段、验收证据和未关闭项。
