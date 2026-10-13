@@ -27,7 +27,9 @@ internal sealed record CodexCliProcessResultV1(
     int? ExitCode,
     bool TimedOut,
     bool Cancelled,
-    CodexCliFailureCategoryV1 FailureCategory = CodexCliFailureCategoryV1.Unknown);
+    CodexCliFailureCategoryV1 FailureCategory = CodexCliFailureCategoryV1.Unknown,
+    long? ProcessStartupMilliseconds = null,
+    long? ExecutionMilliseconds = null);
 
 internal interface ICodexCliProcessRunnerV1
 {
@@ -213,7 +215,9 @@ internal sealed class StructuredCodexCliExecutorV1 : IStructuredCodexCliExecutor
 
                 return new StructuredCodexCliExecutionResultV1(
                     StructuredCodexCliExecutionStatusV1.Completed,
-                    outputDocument.RootElement.Clone());
+                    outputDocument.RootElement.Clone(),
+                    processResult.ProcessStartupMilliseconds,
+                    processResult.ExecutionMilliseconds);
             }
             catch (JsonException)
             {
@@ -501,10 +505,13 @@ internal sealed class SystemCodexCliProcessRunnerV1 : ICodexCliProcessRunnerV1
         }
 
         using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
+        var startupTimestamp=Stopwatch.GetTimestamp();
         if (!process.Start())
         {
             return new CodexCliProcessResultV1(null, TimedOut: false, Cancelled: false);
         }
+        var startupMilliseconds=(long)Stopwatch.GetElapsedTime(startupTimestamp).TotalMilliseconds;
+        var executionTimestamp=Stopwatch.GetTimestamp();
 
         var stdoutDrain = DrainAndDiscardAsync(process.StandardOutput.BaseStream);
         var stderrClassification = DrainAndClassifyStderrAsync(process.StandardError.BaseStream);
@@ -534,7 +541,9 @@ internal sealed class SystemCodexCliProcessRunnerV1 : ICodexCliProcessRunnerV1
                 process.ExitCode,
                 TimedOut: !cancellationToken.IsCancellationRequested && timeoutSource.IsCancellationRequested,
                 Cancelled: cancellationToken.IsCancellationRequested,
-                FailureCategory: await stderrClassification.ConfigureAwait(false));
+                FailureCategory: await stderrClassification.ConfigureAwait(false),
+                ProcessStartupMilliseconds:startupMilliseconds,
+                ExecutionMilliseconds:(long)Stopwatch.GetElapsedTime(executionTimestamp).TotalMilliseconds);
         }
         catch
         {
@@ -549,7 +558,9 @@ internal sealed class SystemCodexCliProcessRunnerV1 : ICodexCliProcessRunnerV1
             process.ExitCode,
             TimedOut: false,
             Cancelled: false,
-            FailureCategory: await stderrClassification.ConfigureAwait(false));
+            FailureCategory: await stderrClassification.ConfigureAwait(false),
+            ProcessStartupMilliseconds:startupMilliseconds,
+            ExecutionMilliseconds:(long)Stopwatch.GetElapsedTime(executionTimestamp).TotalMilliseconds);
     }
 
     private static async Task DrainAndDiscardAsync(Stream stream)

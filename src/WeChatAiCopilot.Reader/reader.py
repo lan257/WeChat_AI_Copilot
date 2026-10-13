@@ -305,7 +305,7 @@ def _success_receipt_summary(
             raise ReaderFailure("FORMAL_API_RECEIPT_INVALID", {"httpStatus": status})
         return {"status": "accepted", "discoveredConversationCount": discovered_count}
 
-    if contract_name == "ReaderDirectoryFailureV1":
+    if contract_name in {"ReaderDirectoryFailureV1", "ReaderHistoryFailureV1"}:
         if receipt.get("accepted") is not True:
             raise ReaderFailure("FORMAL_API_RECEIPT_INVALID", {"httpStatus": status})
         return {"status": "accepted"}
@@ -478,6 +478,81 @@ def _get_next_discovery_job(settings: dict[str, Any]) -> dict[str, str] | None:
             or job.get("accountExternalId") != settings["accountExternalId"]):
         raise ReaderFailure("READER_DISCOVERY_RESPONSE_INVALID")
     return {"jobId": job["jobId"], "accountExternalId": job["accountExternalId"]}
+
+
+def _get_history_control(settings: dict[str, Any], path: str) -> dict[str, Any] | None:
+    transport = settings["transport"]
+    request = urllib.request.Request(transport["apiBaseUrl"] + path, method="GET", headers={
+        "Authorization": "Bearer " + transport["readerBearerToken"], "Accept": "application/json"})
+    try:
+        with urllib.request.build_opener(_NoRedirectHandler()).open(request, timeout=5) as response:
+            if int(response.status) == 204:
+                return None
+            body = response.read(MAX_API_RESPONSE_BYTES + 1)
+            if len(body) > MAX_API_RESPONSE_BYTES:
+                raise ReaderFailure("READER_HISTORY_RESPONSE_INVALID")
+            result = json.loads(body.decode("utf-8"))
+            if not isinstance(result, dict):
+                raise ReaderFailure("READER_HISTORY_RESPONSE_INVALID")
+            return result
+    except ReaderFailure:
+        raise
+    except (ValueError, UnicodeDecodeError, urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException):
+        raise ReaderFailure("READER_HISTORY_POLL_UNAVAILABLE") from None
+
+
+def _run_queued_history(settings: dict[str, Any], db_module: Any, stop: threading.Event) -> None:
+    """Run a claimed job on a separate database instance; realtime stays responsive."""
+    job = _get_history_control(settings, "/api/reader/history-jobs/next")
+    if job is None:
+        return
+    if (not isinstance(job.get("jobId"), str) or not re.fullmatch(r"[0-9a-fA-F-]{36}", job["jobId"])
+            or job.get("accountExternalId") != settings["accountExternalId"]
+            or not isinstance(job.get("conversationExternalId"), str)
+            or not isinstance(job.get("maximumRows"), int) or isinstance(job["maximumRows"], bool)
+            or not 1 <= job["maximumRows"] <= MAX_HISTORY_ROWS):
+        raise ReaderFailure("READER_HISTORY_RESPONSE_INVALID")
+    route = "/api/reader/history-jobs/" + job["jobId"]
+    target = job["conversationExternalId"]
+    database = None
+    workdir = None
+    try:
+        if target not in _get_server_targets(settings)["conversationExternalIds"]:
+            raise ReaderFailure("READER_SCOPE_NOT_ALLOWED")
+        from_utc = _parse_utc(job.get("fromUtc"), "from-utc")
+        to_utc = _parse_utc(job.get("toUtc"), "to-utc")
+        if from_utc is None or to_utc is None or from_utc > to_utc or to_utc - from_utc > dt.timedelta(days=90):
+            raise ReaderFailure("INVALID_HISTORY_RANGE")
+        scoped = {**settings, "conversationExternalId": target}
+        database, workdir = _open_database(scoped, db_module)
+        rows = _read_history(database, scoped, from_utc, to_utc, job["maximumRows"])
+        batches = [rows[index:index + 100] for index in range(0, len(rows), 100)] or [[]]
+        for index, items in enumerate(batches):
+            if stop.is_set():
+                raise ReaderFailure("READER_HISTORY_INTERRUPTED")
+            control = _get_history_control(settings, route)
+            if control is None or control.get("status") != "Running":
+                return
+            if target not in _get_server_targets(settings)["conversationExternalIds"]:
+                raise ReaderFailure("READER_SCOPE_NOT_ALLOWED")
+            _post_contract(settings, route + "/batches", "HistoryBatchV1", {
+                "schemaVersion": 1, "jobId": job["jobId"], "accountExternalId": settings["accountExternalId"],
+                "conversationExternalId": target,
+                "requestedRange": {"fromUtc": _utc_text(from_utc), "toUtc": _utc_text(to_utc)},
+                "items": items, "isLastBatch": index == len(batches) - 1})
+    except ReaderFailure as exc:
+        try:
+            _post_contract(settings, route + "/fail", "ReaderHistoryFailureV1", {"errorCode": exc.code})
+        except ReaderFailure:
+            pass
+    except Exception:
+        try:
+            _post_contract(settings, route + "/fail", "ReaderHistoryFailureV1", {"errorCode": "READER_HISTORY_FAILED"})
+        except ReaderFailure:
+            pass
+    finally:
+        if workdir is not None:
+            shutil.rmtree(workdir, ignore_errors=True)
 
 
 def _discover_session_directory(database: Any) -> list[dict[str, str | None]]:
@@ -918,6 +993,8 @@ def _run_realtime(settings: dict[str, Any], db_module: Any) -> None:
     last_error_code: str | None = None
     final_state = "Stopped"
     final_error_code: str | None = None
+    history_stop = threading.Event()
+    history_thread: threading.Thread | None = None
     try:
         with _quiet_upstream_output():
             local_app_data = Path(os.environ["LOCALAPPDATA"])
@@ -1017,9 +1094,21 @@ def _run_realtime(settings: dict[str, Any], db_module: Any) -> None:
             listener.start()
             next_sync_at = 0.0
             while not callback_failed.is_set():
+                managed_stop = Path(os.environ["LOCALAPPDATA"]) / "WeChatAiCopilot" / "Formal" / ("reader-stop-" + str(os.getpid()) + ".request")
+                if managed_stop.is_file() and managed_stop.stat().st_mtime >= started_at.timestamp():
+                    managed_stop.unlink(missing_ok=True)
+                    break
                 now = time.monotonic()
                 if settings["transport"]["enabled"] and now >= next_sync_at:
                     next_sync_at = now + 5
+                    if history_thread is None or not history_thread.is_alive():
+                        def history_worker() -> None:
+                            try:
+                                _run_queued_history(settings, db_module, history_stop)
+                            except ReaderFailure:
+                                pass  # Only sanitized heartbeat/receipt metadata is logged.
+                        history_thread = threading.Thread(target=history_worker, daemon=True, name="history-worker")
+                        history_thread.start()
                     try:
                         target_snapshot = _get_server_targets(settings)
                         target_version = target_snapshot["targetVersion"]
@@ -1091,6 +1180,9 @@ def _run_realtime(settings: dict[str, Any], db_module: Any) -> None:
         final_error_code = "REALTIME_CAPTURE_FAILED"
         raise ReaderFailure("REALTIME_CAPTURE_FAILED") from None
     finally:
+        history_stop.set()
+        if history_thread is not None:
+            history_thread.join(timeout=6)
         if settings["transport"]["enabled"]:
             try:
                 _post_contract(settings, "/api/reader/status", "ReaderStatusHeartbeatV1", {

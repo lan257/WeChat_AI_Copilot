@@ -1,5 +1,7 @@
 using WeChatAiCopilot.Api.Modules.Agent.Contracts;
 using WeChatAiCopilot.Api.Modules.Memory.Contracts;
+using WeChatAiCopilot.Api.Modules.Memory.Application;
+using WeChatAiCopilot.Api.Modules.Skills;
 
 namespace WeChatAiCopilot.Api.Modules.Agent.Application;
 
@@ -7,7 +9,10 @@ public sealed class AgentTaskApplicationServiceV1(
     IAgentRepositoryV1 repository,
     IAgentTaskCoordinatorV1 coordinator,
     IAgentPresetCatalogV1 presetCatalog,
-    TimeProvider? timeProvider = null) : IAgentTaskApplicationServiceV1
+    TimeProvider? timeProvider = null,
+    SkillResolutionService? skillResolver = null,
+    PortraitServiceV6? portraits = null,
+    V6RoutingPolicy? routing = null) : IAgentTaskApplicationServiceV1
 {
     public const int MaximumConsultationUserInputLength = 4000;
 
@@ -36,7 +41,8 @@ public sealed class AgentTaskApplicationServiceV1(
                 "AGENT_PRESETS_NOT_CONFIGURED", "No Agent persona presets are registered.");
         }
 
-        if (!presetCatalog.Contains(request.PersonaPresetId))
+        var skillSnapshot=skillResolver is null?null:await skillResolver.ResolveAsync(scope,request.PersonaPresetId,cancellationToken);
+        if (skillSnapshot is null && !presetCatalog.Contains(request.PersonaPresetId))
         {
             throw new ArgumentException("The requested persona preset is not registered.", nameof(request));
         }
@@ -56,6 +62,9 @@ public sealed class AgentTaskApplicationServiceV1(
             ConversationId = scope.ConversationId,
             PersonaPresetId = request.PersonaPresetId,
             PreviousBatchId = previousBatchId,
+            TrustedSkillSnapshot = skillSnapshot,
+            TrustedExpression = portraits is null?null:await portraits.GetExpressionAsync(scope.AccountId,cancellationToken),
+            TrustedQuickModel = request.ExecutionProfileId==AgentExecutionProfileIdV1.Quick&&routing is not null?await routing.ReadQuickAsync(cancellationToken):null,
             ContextRevision = null
         };
 
@@ -158,6 +167,9 @@ public sealed class AgentTaskApplicationServiceV1(
             ConversationId = scope.ConversationId,
             ThreadId = thread.ThreadId,
             UserInput = userInput,
+            TrustedSkillSnapshot = skillResolver is null?null:await skillResolver.ResolveAsync(scope,null,cancellationToken),
+            TrustedExpression = portraits is null?null:await portraits.GetExpressionAsync(scope.AccountId,cancellationToken),
+            TrustedQuickModel = executionProfileId==AgentExecutionProfileIdV1.Quick&&routing is not null?await routing.ReadQuickAsync(cancellationToken):null,
             ContextRevision = null
         };
 

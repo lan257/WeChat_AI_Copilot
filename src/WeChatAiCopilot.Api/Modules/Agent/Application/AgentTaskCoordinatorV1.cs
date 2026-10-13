@@ -4,6 +4,7 @@ using WeChatAiCopilot.Api.Modules.Agent.Contracts;
 using WeChatAiCopilot.Api.Modules.Agent.Runtime;
 using WeChatAiCopilot.Api.Modules.Memory.Application;
 using WeChatAiCopilot.Api.Modules.Memory.Contracts;
+using WeChatAiCopilot.Api.Modules.Skills;
 
 namespace WeChatAiCopilot.Api.Modules.Agent.Application;
 
@@ -20,6 +21,7 @@ public sealed class AgentTaskCoordinatorV1 : IAgentTaskCoordinatorV1
     private readonly IContextToolSessionFactoryV1? _contextToolSessionFactory;
     private readonly AgentTaskCoordinatorOptionsV1 _options;
     private readonly TimeProvider _timeProvider;
+    private readonly SkillResolutionService? _skills;
 
     public AgentTaskCoordinatorV1(
         IContextServiceV1 contextService,
@@ -28,7 +30,8 @@ public sealed class AgentTaskCoordinatorV1 : IAgentTaskCoordinatorV1
         IAgentPresetCatalogV1 presetCatalog,
         AgentTaskCoordinatorOptionsV1 options,
         TimeProvider? timeProvider = null,
-        IContextToolSessionFactoryV1? contextToolSessionFactory = null)
+        IContextToolSessionFactoryV1? contextToolSessionFactory = null,
+        SkillResolutionService? skills = null)
     {
         _contextService = contextService ?? throw new ArgumentNullException(nameof(contextService));
         _runtime = runtime ?? throw new ArgumentNullException(nameof(runtime));
@@ -44,6 +47,7 @@ public sealed class AgentTaskCoordinatorV1 : IAgentTaskCoordinatorV1
             ProfileModelIds = new Dictionary<AgentExecutionProfileIdV1, string>(options.ProfileModelIds)
         };
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _skills = skills;
     }
 
     public async Task<SuggestionBatchV1> CreateSuggestionsAsync(
@@ -55,7 +59,8 @@ public sealed class AgentTaskCoordinatorV1 : IAgentTaskCoordinatorV1
         ValidateAuthorizedScope(authorizedScope);
         EnsureTaskType(task, AgentTaskTypeV1.ReplyCandidates);
         EnsureTaskScope(task, authorizedScope);
-        if (!_presetCatalog.TryGetInstruction(task.PersonaPresetId ?? string.Empty, out var personaInstruction))
+        var personaInstruction=task.TrustedSkillSnapshot?.PersonaInstruction;
+        if (personaInstruction is null && !_presetCatalog.TryGetInstruction(task.PersonaPresetId ?? string.Empty, out personaInstruction))
         {
             throw new AgentTaskContractException(
                 [new AgentContractViolationV1("PERSONA_PRESET_UNAVAILABLE", "personaPresetId", "The requested persona is not available.")]);
@@ -371,6 +376,8 @@ public sealed class AgentTaskCoordinatorV1 : IAgentTaskCoordinatorV1
         ContextBundleV1 contextBundle;
         try
         {
+            if(_skills is not null&&scopedTask.TrustedSkillSnapshot is {} contextSkills)await _skills.RecordStageUseAsync(authorizedScope,"context",contextSkills,cancellationToken);
+            using var contextMeasurement=AgentTaskTelemetryV6.Current.Value?.Measure("contextMilliseconds","RetrievingContext");
             contextBundle = await _contextService.BuildAsync(
                 new ContextRequestV1
                 {
@@ -405,7 +412,8 @@ public sealed class AgentTaskCoordinatorV1 : IAgentTaskCoordinatorV1
         var request = new ScopedAgentRequestV1
         {
             Task = task,
-            ModelId = executionPolicy.ModelId,
+            ModelId = task.TrustedQuickModel is {} quick?quick.ModelId:executionPolicy.ModelId,
+            RecordSkillStage = _skills is not null&&task.TrustedSkillSnapshot is {} skillSnapshot?(stage,ct)=>_skills.RecordStageUseAsync(authorizedScope,stage,skillSnapshot,ct):null,
             Context = context,
             BoundThread = boundThread,
             ContextToolSession = _contextToolSessionFactory?.Bind(authorizedScope),
@@ -459,6 +467,7 @@ public sealed class AgentTaskCoordinatorV1 : IAgentTaskCoordinatorV1
         AgentRuntimeResultV1 result;
         try
         {
+            if(request.RecordSkillStage is not null)await request.RecordSkillStage(task.TaskType==AgentTaskTypeV1.ReplyCandidates?"reply":"consult",cancellationToken);
             result = await _runtime.ExecuteAsync(request, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

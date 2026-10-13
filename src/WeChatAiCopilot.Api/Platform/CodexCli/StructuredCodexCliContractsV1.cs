@@ -22,7 +22,9 @@ public enum StructuredCodexCliExecutionStatusV1
 
 public sealed record StructuredCodexCliExecutionResultV1(
     StructuredCodexCliExecutionStatusV1 Status,
-    JsonElement? Output);
+    JsonElement? Output,
+    long? ProcessStartupMilliseconds = null,
+    long? ExecutionMilliseconds = null);
 
 /// <summary>
 /// Fixed-policy structured Codex execution. Business modules provide data, a

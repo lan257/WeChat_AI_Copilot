@@ -20,6 +20,42 @@ $apiPidPath = Join-Path $stateRoot 'api.pid'
 $apiLogPath = Join-Path $stateRoot 'api.log'
 $apiErrorPath = Join-Path $stateRoot 'api-error.log'
 $stagePath = Join-Path $stateRoot 'startup-stage.txt'
+$readerPidPath = Join-Path $stateRoot 'reader.pid'
+$readerLogPath = Join-Path $stateRoot 'reader.log'
+$readerErrorPath = Join-Path $stateRoot 'reader-error.log'
+$stopOnExit = $true
+$script:apiStartedByLauncher = $false
+$script:databaseStartedByLauncher = $false
+$script:readerStartedByLauncher = $false
+
+function Open-AuthenticatedWorkspace {
+    $grant = New-RandomHex
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { $grantHash = [BitConverter]::ToString($sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($grant))).Replace('-', '').ToLowerInvariant() }
+    finally { $sha.Dispose() }
+    $bootstrap = [ordered]@{ tokenHash = $grantHash; expiresAtUtc = [DateTime]::UtcNow.AddMinutes(2).ToString('o') }
+    $bootstrapPath = Join-Path $stateRoot 'web-bootstrap.json'
+    [System.IO.File]::WriteAllText($bootstrapPath, ($bootstrap | ConvertTo-Json -Compress), [System.Text.UTF8Encoding]::new($false))
+    Start-Process ($baseUrl + '/#bootstrap=' + $grant)
+}
+
+function Start-ManagedReader([string] $pythonExe) {
+    if (Test-Path -LiteralPath $readerPidPath) {
+        $readerCandidateId = 0
+        if ([int]::TryParse((Get-Content -Raw -LiteralPath $readerPidPath), [ref]$readerCandidateId)) {
+            $readerCandidate = Get-CimInstance Win32_Process -Filter ('ProcessId=' + $readerCandidateId) -ErrorAction SilentlyContinue
+            if ($readerCandidate -and $readerCandidate.ExecutablePath -eq $pythonExe -and
+                $readerCandidate.CommandLine -like ('*' + $readerScript + '*') -and $readerCandidate.CommandLine -match '\brealtime\b') { return }
+        }
+    }
+    $readerArguments = '"' + $readerScript + '" realtime'
+    $managedReader = Start-Process -FilePath $pythonExe -ArgumentList $readerArguments -WorkingDirectory $readerRoot -WindowStyle Hidden -PassThru -RedirectStandardOutput $readerLogPath -RedirectStandardError $readerErrorPath
+    $script:readerStartedByLauncher = $true
+    Set-Content -LiteralPath $readerPidPath -Value $managedReader.Id -Encoding ascii
+    Start-Sleep -Milliseconds 500
+    $managedReader.Refresh()
+    if ($managedReader.HasExited) { throw '本机读取器未能启动，请在运行状态中检查读取器故障；真实聊天正文不会写入日志。' }
+}
 
 function Set-StartupStage([string] $name) {
     [System.IO.File]::WriteAllText($stagePath, $name, [System.Text.UTF8Encoding]::new($false))
@@ -319,6 +355,7 @@ function Ensure-LocalDatabase([string] $bin, $secrets) {
         Remove-StalePrivatePostgresPidFile
         Set-StartupStage '正在启动本机专用数据库…'
         $postgresProcess = Start-Process -FilePath $postgres -ArgumentList @('-D', $dataRoot, '-h', '127.0.0.1', '-p', "$databasePort") -WorkingDirectory $stateRoot -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $stateRoot 'postgres.log') -RedirectStandardError (Join-Path $stateRoot 'postgres-error.log')
+        $script:databaseStartedByLauncher = $true
         Set-StartupStage '本机数据库进程已启动，正在等待就绪…'
 
         $deadline = [DateTime]::UtcNow.AddSeconds(45)
@@ -399,7 +436,7 @@ function Start-FormalApi($scope, $secrets) {
         if ([int]::TryParse((Get-Content -Raw -LiteralPath $apiPidPath), [ref]$candidateId)) {
             $processFilter = 'ProcessId=' + [string]$candidateId
             $candidate = Get-CimInstance Win32_Process -Filter $processFilter -ErrorAction SilentlyContinue
-            if ($candidate -and $candidate.CommandLine -like '*WeChatAiCopilot.Api.dll*') {
+            if ($candidate -and $candidate.CommandLine -like ('*' + (Join-Path $apiProject 'bin\Release\net10.0\WeChatAiCopilot.Api.dll') + '*')) {
                 $existingProcessId = $candidateId
             }
         }
@@ -419,9 +456,18 @@ function Start-FormalApi($scope, $secrets) {
     $dotnet = (Get-Command dotnet.exe -ErrorAction SilentlyContinue).Source
     if (-not $dotnet) { throw '.NET 10 is not installed. The one-click launcher cannot start the formal app.' }
     $buildLog = Join-Path $stateRoot 'build.log'
-    & $dotnet 'build' (Join-Path $productRoot 'WeChatAiCopilot.sln') '-c' 'Release' '--nologo' '-v:q' *> $buildLog
-    if ($LASTEXITCODE -ne 0) { throw 'The formal app could not be built. See the local build log under the application data folder.' }
     $apiDll = Join-Path $apiProject 'bin\Release\net10.0\WeChatAiCopilot.Api.dll'
+    $requiresBuild = -not (Test-Path -LiteralPath $apiDll)
+    if (-not $requiresBuild) {
+        $builtAt = (Get-Item -LiteralPath $apiDll).LastWriteTimeUtc
+        $changedSource = Get-ChildItem -LiteralPath $apiProject -Recurse -File | Where-Object { $_.FullName -notmatch '[\\/](bin|obj)[\\/]' -and $_.Extension -in @('.cs','.csproj','.json') -and $_.LastWriteTimeUtc -gt $builtAt } | Select-Object -First 1
+        $changedMigration = Get-ChildItem -LiteralPath (Join-Path $productRoot 'db\migrations') -File | Where-Object { $_.LastWriteTimeUtc -gt $builtAt } | Select-Object -First 1
+        $requiresBuild = $null -ne $changedSource -or $null -ne $changedMigration
+    }
+    if ($requiresBuild) {
+        & $dotnet 'build' (Join-Path $productRoot 'WeChatAiCopilot.sln') '-c' 'Release' '--nologo' '-v:q' *> $buildLog
+        if ($LASTEXITCODE -ne 0) { throw 'The formal app could not be built. See the local build log under the application data folder.' }
+    }
     if (-not (Test-Path -LiteralPath $apiDll)) { throw 'The formal app build did not produce the expected API file.' }
 
     $env:ASPNETCORE_URLS = $baseUrl
@@ -429,6 +475,22 @@ function Start-FormalApi($scope, $secrets) {
     $env:ConnectionStrings__FormalDatabase = "Host=127.0.0.1;Port=$databasePort;Database=$databaseName;Username=$databaseUser;Password=$($secrets.DatabasePassword);Timeout=15;Command Timeout=60"
     $env:Authentication__WebBearerToken = $secrets.WebToken
     $env:Authentication__ReaderBearerToken = $secrets.ReaderToken
+    $env:Web__BootstrapGrantPath = Join-Path $stateRoot 'web-bootstrap.json'
+    $env:Operations__StateRoot = $stateRoot
+    $httpsConfigPath = Join-Path $stateRoot 'https.json'
+    if (Test-Path -LiteralPath $httpsConfigPath) {
+        $httpsConfig = [System.IO.File]::ReadAllText($httpsConfigPath, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+        if ($httpsConfig.enabled -eq $true -and $httpsConfig.origin -match '^https://[A-Za-z0-9.\-]+:5443$' -and (Test-Path -LiteralPath $httpsConfig.certificatePath)) {
+            $certificatePassword = New-Object System.Net.NetworkCredential('', (ConvertTo-SecureString $httpsConfig.protectedPassword))
+            $env:Kestrel__Endpoints__Local__Url = $baseUrl
+            $env:Kestrel__Endpoints__Mobile__Url = 'https://0.0.0.0:5443'
+            $env:Kestrel__Endpoints__Mobile__Certificate__Path = [string]$httpsConfig.certificatePath
+            $env:Kestrel__Endpoints__Mobile__Certificate__Password = $certificatePassword.Password
+            $env:Web__TrustedHttpsEnabled = 'true'
+            $env:Web__MobileOrigin = [string]$httpsConfig.origin
+            $env:Web__PublicCertificatePath = [string]$httpsConfig.publicCertificatePath
+        }
+    }
     $env:Web__AllowedAccountExternalId = [string]$scope.accountExternalId
     $env:Web__AllowedConversationExternalId = [string]$scope.conversationExternalId
     $env:Reader__AllowedAccountExternalId = [string]$scope.accountExternalId
@@ -450,10 +512,11 @@ function Start-FormalApi($scope, $secrets) {
     $env:Agent__AllowedReadCapabilities__3 = 'GetMessageEvidence'
     try {
         $process = Start-Process -FilePath $dotnet -ArgumentList @($apiDll) -WorkingDirectory $apiProject -WindowStyle Hidden -PassThru -RedirectStandardOutput $apiLogPath -RedirectStandardError $apiErrorPath
+        $script:apiStartedByLauncher = $true
         Set-Content -LiteralPath $apiPidPath -Value $process.Id -Encoding ascii
     }
     finally {
-        @('ASPNETCORE_URLS','ASPNETCORE_ENVIRONMENT','ConnectionStrings__FormalDatabase','Authentication__WebBearerToken','Authentication__ReaderBearerToken','Web__AllowedAccountExternalId','Web__AllowedConversationExternalId','Reader__AllowedAccountExternalId','Reader__AllowedConversationExternalId','Agent__Runtime','Agent__SkillVersion','Agent__RecentMessageLimit','Agent__IncludeMemory','Agent__Budget__MaxDurationSeconds','Agent__Budget__MaxContextCharacters','Agent__Budget__MaxToolCalls','Agent__AllowedPersonaPresetIds__0','Agent__AllowedPersonaPresetIds__1','Agent__AllowedPersonaPresetIds__2','Agent__AllowedPersonaPresetIds__3','Agent__AllowedReadCapabilities__0','Agent__AllowedReadCapabilities__1','Agent__AllowedReadCapabilities__2','Agent__AllowedReadCapabilities__3') | ForEach-Object { Remove-Item "Env:$_" -ErrorAction SilentlyContinue }
+        @('ASPNETCORE_URLS','ASPNETCORE_ENVIRONMENT','ConnectionStrings__FormalDatabase','Authentication__WebBearerToken','Authentication__ReaderBearerToken','Web__BootstrapGrantPath','Operations__StateRoot','Web__TrustedHttpsEnabled','Web__MobileOrigin','Web__PublicCertificatePath','Kestrel__Endpoints__Local__Url','Kestrel__Endpoints__Mobile__Url','Kestrel__Endpoints__Mobile__Certificate__Path','Kestrel__Endpoints__Mobile__Certificate__Password','Web__AllowedAccountExternalId','Web__AllowedConversationExternalId','Reader__AllowedAccountExternalId','Reader__AllowedConversationExternalId','Agent__Runtime','Agent__SkillVersion','Agent__RecentMessageLimit','Agent__IncludeMemory','Agent__Budget__MaxDurationSeconds','Agent__Budget__MaxContextCharacters','Agent__Budget__MaxToolCalls','Agent__AllowedPersonaPresetIds__0','Agent__AllowedPersonaPresetIds__1','Agent__AllowedPersonaPresetIds__2','Agent__AllowedPersonaPresetIds__3','Agent__AllowedReadCapabilities__0','Agent__AllowedReadCapabilities__1','Agent__AllowedReadCapabilities__2','Agent__AllowedReadCapabilities__3') | ForEach-Object { Remove-Item "Env:$_" -ErrorAction SilentlyContinue }
     }
 
     $deadline = [DateTime]::UtcNow.AddSeconds(90)
@@ -552,17 +615,25 @@ function Import-InitialHistory($scope, $secrets, [string] $pythonExe) {
 }
 
 function Stop-FormalServices([string] $bin) {
-    if (Test-Path -LiteralPath $apiPidPath) {
+    if ($script:readerStartedByLauncher -and (Test-Path -LiteralPath $readerPidPath)) {
+        $readerToStop = 0
+        if ([int]::TryParse((Get-Content -Raw -LiteralPath $readerPidPath), [ref]$readerToStop)) {
+            $readerCandidate = Get-CimInstance Win32_Process -Filter ('ProcessId=' + $readerToStop) -ErrorAction SilentlyContinue
+            if ($readerCandidate -and $readerCandidate.CommandLine -like ('*' + $readerScript + '*')) { Stop-Process -Id $readerToStop -Force -ErrorAction SilentlyContinue }
+        }
+        Remove-Item -LiteralPath $readerPidPath -Force -ErrorAction SilentlyContinue
+    }
+    if ($script:apiStartedByLauncher -and (Test-Path -LiteralPath $apiPidPath)) {
         $candidateId = 0
         if ([int]::TryParse((Get-Content -Raw -LiteralPath $apiPidPath), [ref]$candidateId)) {
             $candidate = Get-CimInstance Win32_Process -Filter "ProcessId=$candidateId" -ErrorAction SilentlyContinue
-            if ($candidate -and $candidate.CommandLine -like '*WeChatAiCopilot.Api.dll*') {
+            if ($candidate -and $candidate.CommandLine -like ('*' + (Join-Path $apiProject 'bin\Release\net10.0\WeChatAiCopilot.Api.dll') + '*')) {
                 Stop-Process -Id $candidateId -Force -ErrorAction SilentlyContinue
             }
         }
         Remove-Item -LiteralPath $apiPidPath -Force -ErrorAction SilentlyContinue
     }
-    if (-not $bin) { return }
+    if (-not $bin -or -not $script:databaseStartedByLauncher) { return }
     $pidPath = Join-Path $dataRoot 'postmaster.pid'
     if (-not (Test-Path -LiteralPath $pidPath -PathType Leaf)) { return }
 
@@ -580,7 +651,12 @@ function Stop-FormalServices([string] $bin) {
 }
 
 $bin = $null
+$startupMutex = [Threading.Mutex]::new($false, ('Local\WeChatAiCopilot.FormalStartup.' + [Security.Principal.WindowsIdentity]::GetCurrent().User.Value))
+$ownsStartupMutex = $false
 try {
+    try { $ownsStartupMutex = $startupMutex.WaitOne(0) }
+    catch [Threading.AbandonedMutexException] { $ownsStartupMutex = $true }
+    if (-not $ownsStartupMutex) { Write-Host '正式项目正在启动，请稍候再打开工作区。'; return }
     New-Item -ItemType Directory -Force -Path $stateRoot | Out-Null
     Set-StartupStage '正在检查本机运行目录权限…'
     Set-PrivateDirectoryAcl $stateRoot
@@ -629,22 +705,15 @@ try {
     Start-FormalApi $scope $secrets
     Import-InitialHistory $scope $secrets $pythonExe
 
-    Set-Clipboard -Value $secrets.WebToken
-    Start-Process $baseUrl
+    Start-ManagedReader $pythonExe
+    Open-AuthenticatedWorkspace
+    $stopOnExit = $false
     Write-Host ''
-    Write-Host '正式工作区已启动，浏览器已打开。Web 令牌已复制到剪贴板，请在网页中粘贴并点击“连接并读取”。'
-    Write-Host '只读采集正在运行。按 Ctrl+C 可停止 Reader；随后 API 和本地数据库会一并关闭。'
-    Write-Host 'Reader 仅显示状态回执，不会在此窗口输出微信消息正文。'
+    Write-Host '正式工作区已启动，浏览器已自动建立本机安全会话，无需复制令牌。'
+    Write-Host '只读采集正在后台运行；本窗口可以关闭。结束使用时双击“关闭正式项目.cmd”。'
+    Write-Host 'Reader 日志只含状态回执，不输出微信消息正文。'
     Write-Host ''
 
-    $previousErrorActionPreference = $ErrorActionPreference
-    try {
-        $ErrorActionPreference = 'Continue'
-        & $pythonExe $readerScript 'realtime'
-        $readerExitCode = $LASTEXITCODE
-    }
-    finally { $ErrorActionPreference = $previousErrorActionPreference }
-    if ($readerExitCode -ne 0) { Write-Host 'Reader 已停止。请查看本机应用状态日志中的错误码。' }
 }
 catch {
     Write-Host ''
@@ -652,5 +721,7 @@ catch {
     exit 1
 }
 finally {
-    if ($bin) { Stop-FormalServices $bin }
+    if ($stopOnExit -and $bin) { Stop-FormalServices $bin }
+    if ($ownsStartupMutex) { $startupMutex.ReleaseMutex() }
+    $startupMutex.Dispose()
 }

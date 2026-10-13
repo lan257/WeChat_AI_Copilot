@@ -1,392 +1,75 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="color-scheme" content="light" />
-  <meta name="theme-color" content="#f5f8f7" />
-  <title>知间 · 微信 AI 沟通助手</title>
-  <link rel="stylesheet" href="styles.css?v=20261012-2" />
-  <script defer src="app.js?v=20261012-2"></script>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="light" />
+<title>知间 · 微信 AI 沟通助手</title>
+<link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <div id="app" class="app-shell">
-    <header class="app-header">
-      <a class="brand" href="/" aria-label="知间工作区">
-        <span class="brand-mark" aria-hidden="true">知</span>
-        <span class="brand-copy">
-          <span class="brand-name">知间 <span>· 微信 AI 沟通助手</span></span>
-          <span class="brand-tagline">PRIVATE CONVERSATION COPILOT</span>
-        </span>
-      </a>
-
-      <nav class="mode-switch" aria-label="界面模式">
-        <button type="button" class="mode-button is-active" data-mode="workspace" aria-pressed="true">工作区</button>
-        <button type="button" class="mode-button" data-mode="minimal" aria-pressed="false">极简模式</button>
-      </nav>
-
-      <div class="service-indicator" id="serviceIndicator" role="status">
-        <span class="status-dot" aria-hidden="true"></span>
-        <span id="serviceIndicatorText">等待授权</span>
-      </div>
-    </header>
-
-    <div id="workspaceView" class="workspace-layout">
-      <aside class="sidebar" aria-label="工作区导航">
-        <div class="sidebar-label">工作台</div>
-        <nav class="side-nav">
-          <button type="button" class="side-link is-current" data-page="chat" aria-current="page"><span class="nav-icon" aria-hidden="true">◫</span>聊天与 AI</button>
-          <button type="button" class="side-link" data-page="connection"><span class="nav-icon" aria-hidden="true">⌁</span>接入与会话</button>
-          <button type="button" class="side-link" data-page="memory"><span class="nav-icon" aria-hidden="true">◇</span>记忆与资料</button>
-          <span class="side-link is-unavailable" aria-disabled="true"><span class="nav-icon" aria-hidden="true">✳</span>AI 与 Skills <small>待接入</small></span>
-          <button type="button" class="side-link" data-page="status"><span class="nav-icon" aria-hidden="true">▤</span>系统状态</button>
-        </nav>
-        <div class="sidebar-note">
-          <span class="note-mark" aria-hidden="true">i</span>
-          <p>聊天、记忆和身份方向只在授权读取后显示；AI 功能状态以服务端配置与响应为准。</p>
-        </div>
-      </aside>
-
-      <main id="mainContent" class="main-content">
-        <section id="chatPage" class="workspace-page" aria-labelledby="chatPageTitle">
-        <div class="page-heading">
-          <div>
-            <div class="eyebrow">CONVERSATION WORKSPACE</div>
-            <h1 id="chatPageTitle">聊天工作区</h1>
-            <p>同屏查看当前会话，并在侧边讨论沟通想法。</p>
-          </div>
-          <button type="button" class="button button-soft" data-mode="minimal" aria-label="切换到极简模式">
-            <span aria-hidden="true">↗</span> 进入极简模式
-          </button>
-        </div>
-
-        <div class="chat-page-tools" aria-label="当前会话">
-          <label class="sr-only" for="chatAccountSelect">微信账号</label>
-          <select id="chatAccountSelect" class="field select scope-select" disabled>
-            <option value="">等待授权读取账号</option>
-          </select>
-          <div class="chat-selected">
-            <div class="session-avatar" aria-hidden="true">知</div>
-            <div class="chat-selected-copy">
-              <strong id="chatSessionValue">等待授权读取当前会话</strong>
-              <span id="chatSessionType">服务器授权范围固定，不由此页切换</span>
-            </div>
-          </div>
-          <span id="chatCaptureStatus" class="pill pill-pending">等待授权</span>
-          <label class="sr-only" for="chatConversationSelect">当前授权会话</label>
-          <select id="chatConversationSelect" class="field select" disabled>
-            <option value="">等待授权读取</option>
-          </select>
-        </div>
-
-        <div class="conversation-grid">
-          <section class="panel chat-panel" aria-labelledby="chatPanelTitle">
-            <div class="panel-heading">
-              <div>
-                <h2 id="chatPanelTitle"><span class="heading-icon chat-icon" aria-hidden="true">◫</span>聊天记录</h2>
-                <p>当前会话的只读消息上下文</p>
-              </div>
-              <span id="messageStatusPill" class="pill pill-muted">等待授权</span>
-            </div>
-
-            <div class="message-area" aria-live="polite">
-              <div class="empty-state" id="messageState">
-                <div class="empty-illustration" aria-hidden="true"><span></span><span></span><span></span></div>
-                <h3>尚未读取聊天记录</h3>
-                <p>请先在“接入与会话”完成授权读取。当前页面没有预置或模拟聊天内容。</p>
-              </div>
-            </div>
-
-            <div class="suggestion-area">
-              <div class="suggestion-heading">
-                <div><h3><span class="sparkle" aria-hidden="true">✳</span>回复建议</h3><p>点击单条建议复制，之后由你在微信手动粘贴</p></div>
-                <span id="suggestionStatus" class="pill pill-muted">等待授权</span>
-              </div>
-              <div id="suggestionState" class="suggestion-unavailable" role="status">
-                <span class="unavailable-icon" aria-hidden="true">…</span>
-                <span><strong id="suggestionStateTitle">等待授权</strong><small id="suggestionStateDetail">完成授权并读取服务器人设目录后，才能请求建议。</small></span>
-              </div>
-              <div id="suggestionList" class="work-choice-list" aria-live="polite"></div>
-              <div class="suggestion-controls" aria-label="建议控制项">
-                <label class="sr-only" for="replyProfileSelect">建议执行档位</label>
-                <select id="replyProfileSelect" class="profile-select" disabled aria-describedby="replyProfileHelp">
-                  <option value="Quick">等待服务器档位目录</option>
-                </select>
-                <label class="sr-only" for="personaSelect">人设预设</label>
-                <select id="personaSelect" class="persona-select" disabled aria-describedby="personaHelp">
-                  <option>等待服务器人设目录</option>
-                </select>
-                <button id="reloadPersonas" type="button" class="button button-secondary" hidden>重试人设目录</button>
-                <button id="generateSuggestions" type="button" class="button button-soft" disabled>生成三条建议</button>
-                <button id="cancelSuggestion" type="button" class="button button-secondary" hidden>取消生成</button>
-                <span id="personaHelp" class="control-help">人设列表来自服务端配置</span>
-                <span id="replyProfileHelp" class="control-help">档位由服务端控制上下文和历史检索范围</span>
-                <span id="suggestionFeedback" class="suggestion-feedback" role="status" aria-live="polite"></span>
-              </div>
-            </div>
-          </section>
-
-          <section class="panel consult-panel" aria-labelledby="consultPanelTitle">
-            <div class="panel-heading">
-              <div>
-                <h2 id="consultPanelTitle"><span class="heading-icon consult-icon" aria-hidden="true">✳</span>AI 自由咨询</h2>
-                <p>围绕当前会话进行分析与讨论</p>
-              </div>
-              <span id="consultationStatus" class="pill pill-muted">等待授权</span>
-            </div>
-            <div class="consult-body">
-              <div class="consult-welcome">
-                <span class="consult-orb" aria-hidden="true">✳</span>
-                <h3>有想法时，可以在这里展开讨论</h3>
-                <p>咨询会绑定当前服务器授权会话，历史记录从服务端恢复。</p>
-              </div>
-              <div id="consultationTurns" class="agent-dialog" aria-live="polite">
-                <div class="consultation-empty"><strong>尚无咨询记录</strong><span>提交问题后会创建或恢复当前会话的咨询线程。</span></div>
-              </div>
-            </div>
-            <form id="consultationForm" class="consult-compose">
-              <div class="consultation-profile-row">
-                <label for="consultationProfileSelect">本轮咨询档位</label>
-                <select id="consultationProfileSelect" class="profile-select" disabled>
-                  <option value="Balanced">等待服务器档位目录</option>
-                </select>
-              </div>
-              <label class="sr-only" for="consultQuestion">向 AI 咨询</label>
-              <textarea id="consultQuestion" rows="3" disabled maxlength="4000" placeholder="输入希望咨询的问题"></textarea>
-              <div class="agent-send-bar">
-                <span id="consultationHint">仅提交给 AI 咨询，不会发送微信消息</span>
-                <button id="cancelConsultation" type="button" class="button button-secondary" hidden>取消咨询</button>
-                <button id="consultSubmit" type="submit" class="button button-soft" disabled>提交给 AI</button>
-              </div>
-              <p id="consultationNotice" class="consultation-notice" role="status" aria-live="polite">请先在“接入与会话”完成授权读取。</p>
-            </form>
-          </section>
-        </div>
-        </section>
-
-        <section id="connectionPage" class="workspace-page" aria-labelledby="connectionPageTitle" hidden>
-          <div class="page-heading">
-            <div>
-              <div class="eyebrow">ACCOUNT & CONVERSATION</div>
-              <h1 id="connectionPageTitle">接入与会话</h1>
-              <p>选择已导入账号与会话。查看会话和订阅 Reader 监听目标是分开的操作。</p>
-            </div>
-          </div>
-
-          <div class="selection-card connection-selection-card">
-            <form id="webAuthForm" class="auth-bar" autocomplete="off">
-              <label class="auth-label" for="webToken">Web Bearer token 值</label>
-              <input id="webToken" class="auth-token" type="password" autocomplete="new-password" spellcheck="false" placeholder="粘贴 Authentication:WebBearerToken 配置值，不含 Bearer 前缀" />
-              <button id="connectApi" type="submit" class="button button-soft">连接并读取</button>
-              <button id="clearApi" type="button" class="auth-clear">清除</button>
-              <span id="apiStatus" class="auth-status" data-state="idle" role="status" aria-live="polite">token 仅保存在当前页面内存；提交后输入框会清空，不写入浏览器存储。</span>
-            </form>
-
-            <section class="session-bar" aria-label="服务器当前授权会话">
-              <div class="session-avatar" aria-hidden="true">知</div>
-              <div class="session-meta">
-                <span class="session-title">当前账号与会话</span>
-                <span id="currentSessionValue" class="session-value">等待授权读取</span>
-              </div>
-              <span id="currentSessionStatus" class="pill pill-pending"><span class="pill-dot" aria-hidden="true"></span>等待授权</span>
-              <label class="sr-only" for="accountSelect">微信账号</label>
-              <select id="accountSelect" class="field select scope-select" disabled>
-                <option value="">等待授权读取账号</option>
-              </select>
-              <label class="sr-only" for="conversationSelect">当前服务端会话</label>
-              <select id="conversationSelect" class="conversation-select" disabled aria-describedby="selectionHelp">
-                <option value="">等待授权读取</option>
-              </select>
-              <span id="selectionHelp" class="sr-only">会话列表来自已导入的 Direct 会话；读取时服务端验证账号与会话关系。</span>
-            </section>
-          </div>
-
-          <section class="status-card reader-directory-card" aria-labelledby="readerDirectoryTitle">
-            <div class="status-card-heading">
-              <span class="status-icon" aria-hidden="true">⌕</span>
-              <div><p class="eyebrow">LOCAL DIRECTORY</p><h2 id="readerDirectoryTitle">发现本机 Direct 会话</h2></div>
-            </div>
-            <p class="status-note">仅在你点击后读取当前活动微信账号的会话目录，保存会话 ID 和显示名；不会上传消息摘要或聊天正文。</p>
-            <div class="reader-directory-actions">
-              <button id="discoverReaderSessions" type="button" class="button button-secondary" disabled>扫描本机会话目录</button>
-              <span id="discoveryStatus" role="status" aria-live="polite">等待 Web 授权</span>
-            </div>
-          </section>
-
-          <section class="status-card reader-targets-card" aria-labelledby="readerTargetsTitle">
-            <div class="status-card-heading">
-              <span class="status-icon" aria-hidden="true">✓</span>
-              <div><p class="eyebrow">READER TARGETS</p><h2 id="readerTargetsTitle">后台监听会话</h2></div>
-              <button id="saveReaderTargets" type="button" class="button button-soft" disabled>保存监听目标</button>
-            </div>
-            <p class="status-note">这些目标独立于当前查看会话；最多同时选择 20 个 Direct 会话。状态以 Reader 心跳为准。</p>
-            <label class="sr-only" for="readerTargetSearch">筛选会话目录</label>
-            <input id="readerTargetSearch" class="reader-target-search" type="search" autocomplete="off" placeholder="搜索已发现的会话" disabled />
-            <div id="readerTargetList" class="reader-target-list" role="group" aria-label="选择后台监听会话">
-              <span class="directory-empty">授权后读取已导入会话。</span>
-            </div>
-            <p id="readerTargetStatus" class="reader-target-feedback" role="status" aria-live="polite"></p>
-          </section>
-
-          <section class="status-card capture-card" aria-labelledby="captureStateTitle">
-            <div class="status-card-heading">
-              <span class="status-icon" aria-hidden="true">◎</span>
-              <div><p class="eyebrow">CAPTURE STATUS</p><h2 id="captureStateTitle">采集状态</h2></div>
-            </div>
-            <dl class="status-list">
-              <div><dt>服务器返回状态</dt><dd id="captureStateValue">等待授权读取</dd></div>
-            </dl>
-            <p class="status-note">当前版本尚未接入 Reader 心跳时，实时采集状态会显示为未知；选择会话不会改变监听目标。</p>
-          </section>
-
-          <details id="perspective" class="identity-preview">
-            <summary>
-              <span class="identity-summary-icon" aria-hidden="true">⇄</span>
-              <span class="identity-summary-copy"><strong>发送者身份校准</strong><small id="perspectiveSummary">等待读取方向状态</small></span>
-              <span id="perspectiveStatus" class="identity-summary-status">等待授权</span>
-            </summary>
-            <div class="identity-content">
-              <p id="identityHelp">授权读取后展示当前会话的身份范围。待确认时可确认当前预览，也可互换两方后再确认。</p>
-              <div class="identity-pair" aria-live="polite">
-                <div class="identity-side"><span>本人预览</span><strong data-identity="self">等待授权读取</strong></div>
-                <span class="identity-arrows" aria-hidden="true">⇄</span>
-                <div class="identity-side"><span>联系人预览</span><strong data-identity="contact">等待授权读取</strong></div>
-              </div>
-              <div class="identity-actions">
-                <button type="button" class="button button-soft" id="confirmCurrent" hidden disabled>确认当前方向</button>
-                <button type="button" class="button button-secondary" id="swapPreview" disabled>互换并确认</button>
-                <span id="previewState" class="local-only-label">尚无可比较身份候选</span>
-              </div>
-              <div id="confirmHelp" class="confirm-help" role="status">需先读取到唯一且可比较的身份范围。</div>
-            </div>
-          </details>
-        </section>
-
-        <section id="memoryPage" class="workspace-page" aria-labelledby="memoryPageTitle" hidden>
-          <div class="page-heading">
-            <div>
-              <div class="eyebrow">MEMORY & CONTEXT</div>
-              <h1 id="memoryPageTitle">记忆与资料</h1>
-              <p>维护当前服务器会话范围内的人工记忆；无聊天证据的条目会明确标为用户备注。</p>
-            </div>
-          </div>
-          <div class="memory-session-summary">
-            <span class="session-avatar" aria-hidden="true">知</span>
-            <div><span class="session-title">当前授权会话</span><strong id="memoryCurrentSession">等待授权读取</strong></div>
-          </div>
-
-        <section id="memory" class="memory-section" aria-labelledby="memoryTitle">
-          <div class="card memory-card-shell">
-            <div class="card-head memory-heading">
-              <div>
-                <h2 id="memoryTitle">可维护记忆</h2>
-                <p>范围由服务端限定为当前账号与会话。没有聊天证据的人工条目会标成“用户备注”。</p>
-              </div>
-              <div class="memory-heading-actions">
-                <span id="memoryStatus" class="pill pill-muted">等待授权</span>
-                <button id="reloadMemories" type="button" class="button button-secondary" disabled>重新读取</button>
-              </div>
-            </div>
-            <div id="memoryFeedback" class="memory-feedback" role="status" aria-live="polite">请先在“接入与会话”完成授权读取。</div>
-            <div class="memory-layout">
-              <form id="memoryCreateForm" class="memory-create-form">
-                <h3>添加用户备注</h3>
-                <p class="memory-form-note">这是人工录入内容；未关联消息证据时会明确标成用户备注，不当作聊天事实。</p>
-                <fieldset id="memoryCreateFields" disabled>
-                  <label class="memory-field-label" for="memorySubjectType">归属对象</label>
-                  <select id="memorySubjectType" class="memory-field">
-                    <option value="Contact">联系人</option>
-                    <option value="WechatAccount">本人账号</option>
-                  </select>
-
-                  <label class="memory-field-label" for="memoryText">记忆内容 <span>最多 4,000 字符</span></label>
-                  <textarea id="memoryText" class="memory-field memory-textarea" rows="4" maxlength="8000" required placeholder="写下需要保留的事实、偏好或背景；请注明这是人工备注"></textarea>
-
-                  <div class="memory-field-row">
-                    <div>
-                      <label class="memory-field-label" for="memoryCategory">分类 <span>可选</span></label>
-                      <input id="memoryCategory" class="memory-field" maxlength="200" placeholder="例如：偏好、计划" />
-                    </div>
-                    <div>
-                      <label class="memory-field-label" for="memoryObservedAt">相关时间 <span>可选</span></label>
-                      <input id="memoryObservedAt" class="memory-field" type="datetime-local" />
-                    </div>
-                  </div>
-                  <button id="createMemoryButton" type="submit" class="button button-soft memory-submit">保存为用户备注</button>
-                </fieldset>
-              </form>
-
-              <div class="memory-items-area">
-                <div class="memory-items-heading">
-                  <h3>当前会话记忆</h3>
-                  <span id="memoryCount" class="micro">尚未读取</span>
-                </div>
-                <div id="memoryItemsState" class="memory-items-state">等待授权读取。</div>
-                <div id="memoryList" class="memory-list" aria-live="polite"></div>
-              </div>
-            </div>
-          </div>
-        </section>
-        </section>
-
-        <section id="statusPage" class="workspace-page status-page" aria-labelledby="statusPageTitle" hidden>
-          <div class="page-heading">
-            <div>
-              <div class="eyebrow">SYSTEM STATUS</div>
-              <h1 id="statusPageTitle">系统状态</h1>
-              <p>查看 API、数据库、Reader 和最近 AI 任务的状态。此页只显示运行元数据，不显示聊天正文、账号 ID 或令牌。</p>
-            </div>
-            <button id="refreshSystemStatus" type="button" class="button button-soft" disabled>刷新状态</button>
-          </div>
-
-          <div id="systemStatusFeedback" class="status-feedback" role="status" aria-live="polite">请先在“接入与会话”完成授权。</div>
-          <div class="system-status-grid" aria-label="服务状态">
-            <article class="status-card system-status-card"><div class="status-card-heading"><span class="status-icon">⌁</span><div><p class="eyebrow">API</p><h2>服务进程</h2></div></div><strong id="apiHealthValue" class="system-status-value">等待读取</strong><p id="apiHealthDetail" class="status-note">等待授权读取健康状态。</p></article>
-            <article class="status-card system-status-card"><div class="status-card-heading"><span class="status-icon">▦</span><div><p class="eyebrow">DATABASE</p><h2>PostgreSQL</h2></div></div><strong id="databaseHealthValue" class="system-status-value">等待读取</strong><p id="databaseHealthDetail" class="status-note">数据库状态未知。</p></article>
-            <article class="status-card system-status-card"><div class="status-card-heading"><span class="status-icon">✳</span><div><p class="eyebrow">AI RUNTIME</p><h2>AI 运行配置</h2></div></div><strong id="agentRuntimeValue" class="system-status-value">等待读取</strong><p id="agentRuntimeDetail" class="status-note">运行方式未知。</p></article>
-          </div>
-
-          <section class="status-card system-status-section" aria-labelledby="readerStatusTitle">
-            <div class="status-card-heading"><span class="status-icon">⌕</span><div><p class="eyebrow">WECHAT READER</p><h2 id="readerStatusTitle">本机读取器</h2></div></div>
-            <div id="readerStatusList" class="system-status-list"><p class="system-status-empty">等待读取 Reader 心跳。</p></div>
-          </section>
-
-          <div class="system-status-grid system-status-grid-secondary">
-            <article class="status-card system-status-card"><div class="status-card-heading"><span class="status-icon">◷</span><div><p class="eyebrow">LATEST AGENT RUN</p><h2>最近 AI 任务</h2></div></div><strong id="agentRunValue" class="system-status-value">等待读取</strong><p id="agentRunDetail" class="status-note">运行记录状态未知。</p></article>
-            <article class="status-card system-status-card"><div class="status-card-heading"><span class="status-icon">◇</span><div><p class="eyebrow">MEMORY</p><h2>自动记忆配置</h2></div></div><strong id="memoryRuntimeValue" class="system-status-value">等待读取</strong><p id="memoryRuntimeDetail" class="status-note">仅显示是否选用了生成运行时，不代表已经成功沉淀。</p></article>
-            <article class="status-card system-status-card"><div class="status-card-heading"><span class="status-icon">⇧</span><div><p class="eyebrow">HISTORY JOBS</p><h2>历史补录任务</h2></div></div><strong id="historyJobsValue" class="system-status-value">等待读取</strong><p id="historyJobsDetail" class="status-note">历史补录任务进度目前没有产品接口。</p></article>
-          </div>
-        </section>
-      </main>
-    </div>
-
-    <main id="minimalView" class="minimal-view" hidden>
-      <section class="minimal-card" aria-label="极简回复建议">
-        <div class="minimal-top">
-          <button type="button" class="expand-button" id="expandMinimal" aria-expanded="false" aria-controls="minimalDetails">
-            <span class="expand-chevron" aria-hidden="true">⌄</span>展开
-          </button>
-          <span id="minimalStatus" class="minimal-status"><span class="status-dot" aria-hidden="true"></span>等待授权</span>
-        </div>
-
-        <div id="minimalSuggestionState" class="minimal-suggestion-state">请先在“接入与会话”完成授权并加载人设目录。</div>
-        <div id="minimalChoices" class="minimal-choices" aria-label="回复建议"></div>
-
-        <div class="minimal-controls">
-          <button type="button" id="minimalPersonaButton" class="minimal-control persona-control" disabled><span aria-hidden="true">◉</span><span id="minimalPersonaLabel">人设 · 等待服务</span></button>
-          <button type="button" id="minimalRefresh" class="minimal-control refresh-control" disabled><span aria-hidden="true">↻</span>换一批</button>
-        </div>
-
-        <div id="minimalDetails" class="minimal-details" hidden>
-          <div class="minimal-detail-row"><span>当前会话</span><strong id="minimalCurrentSession">等待授权读取</strong></div>
-          <p>极简模式使用与聊天页相同的服务器授权会话和建议状态。接入前不会显示演示消息或虚构建议。</p>
-          <button type="button" class="button button-soft return-workspace" data-mode="workspace">返回工作区</button>
-        </div>
-      </section>
-    </main>
-
-    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+<div id="app">
+<header class="topbar">
+ <div class="brand"><span class="brandmark">知</span><div class="brandname">知间 <span class="brandtag">让每一次沟通都更从容</span></div></div>
+ <div class="topright">
+  <div class="demo-pill"><span class="demo-dot"></span> 正在连接本机应用…</div>
+  <button class="top-chip hide-med" data-action="refresh" title="读取真实消息并检查建议版本"><span data-icon="zap"></span><span class="label">刷新消息</span></button>
+  <button class="top-chip hide-mobile" data-action="drawer" data-tab="setup"><span data-icon="settings"></span><span class="label">连接设置</span></button><button class="top-chip hide-mobile" data-action="drawer" data-tab="overview"><span data-icon="sliders"></span><span class="label">管理</span></button>
+  <button class="top-chip" data-action="focus"><span data-icon="minimize"></span><span class="label">极简模式</span></button>
+  <button class="iconbtn mobile-contacts" data-action="mobile-contacts" aria-label="联系人"><span data-icon="users"></span></button>
+ </div>
+</header>
+<div class="app-body">
+ <aside class="sidebar" id="sidebar">
+  <div class="side-top">
+   <div class="subhead">当前微信账号</div>
+   <div class="account-select-wrap"><span class="account-logo">微</span><div class="accopy"><strong id="accountName">当前微信账号</strong><small id="accountSub">等待安全会话</small></div><span class="account-chev" data-icon="chevron-down"></span><select id="accountSelect" aria-label="切换微信账号"></select></div>
+   <div class="side-search"><span data-icon="search"></span><input id="contactSearch" aria-label="搜索联系人" placeholder="搜索联系人或会话" autocomplete="off" /></div>
   </div>
-  <noscript><p class="noscript-note">此界面需要启用 JavaScript 才能切换工作区和极简模式。</p></noscript>
-</body>
-</html>
+  <div class="list-controls"><strong>消息</strong><div class="filter-group"><button data-action="filter" data-filter="all" class="active">全部</button><button data-action="filter" data-filter="listening">监听中</button></div></div>
+  <div class="conv-list" id="conversationList"></div>
+  <div class="side-bottom"><div class="listen-summary"><span><span class="live-light"></span><span id="listenCount">正在读取监听状态</span></span><button class="textbtn" data-action="drawer" data-tab="listening">管理</button></div><div class="side-actions"><button class="secondary" data-action="drawer" data-tab="portrait"><span data-icon="users"></span>人物画像</button><button class="secondary" data-action="drawer" data-tab="overview"><span data-icon="settings"></span>设置</button></div></div>
+ </aside>
+ <main class="chat-section">
+  <div class="chat-header">
+   <button class="iconbtn mobile-contacts" data-action="mobile-contacts" aria-label="打开联系人列表"><span data-icon="menu"></span></button>
+   <button class="avatar" id="chatAvatar" data-action="drawer" data-tab="portrait" aria-label="打开联系人画像">微</button><div class="chat-title-group"><div class="chat-title"><strong id="chatTitle">请选择联系人</strong><span class="status-mini off" id="chatStatus">未监听</span></div><div class="chat-subtitle" id="chatSubtitle">每条建议只针对当前联系人</div></div>
+   <div class="chat-actions"><button class="secondary portrait-shortcut hide-mobile" data-action="drawer" data-tab="portrait" title="打开该联系人的人物画像"><span data-icon="users"></span>人物画像</button><button class="iconbtn mobile-ai-open" data-action="ai-open" title="打开 AI 咨询"><span data-icon="sparkles"></span></button><div class="chat-divider"></div><button class="iconbtn" data-action="drawer" data-tab="conversation" title="当前会话详情与操作"><span data-icon="more-horizontal"></span></button></div>
+  </div>
+  <div id="identityBanner" class="identity-banner hidden"><span>该会话的本人/对方方向仍待确认，请先校准后再依据长期记忆作判断。</span><button data-action="drawer" data-tab="identity">去校准 →</button></div>
+  <div class="chat-timeline" id="chatTimeline"></div>
+  <section class="suggest-dock" aria-label="AI 回复建议">
+    <div class="suggest-bar"><div class="section-mini-title"><span class="spark" data-icon="sparkles"></span><span>回复建议</span><span id="suggestStatus" class="gen-status">等待生成</span></div><div class="suggest-settings"><select id="personaSelect" class="pill-select" aria-label="回复人设"></select><button type="button" class="skill-shortcut" data-action="skill-new" data-kind="persona" title="创建自己的回复人设">自定义</button><select id="thinkingSelect" class="pill-select" aria-label="思考强度"><option value="Quick">快速</option><option value="Balanced">平衡</option><option value="Deep">深度</option><option value="Max">Max · 复核</option></select><button id="generateButton" class="small-primary" data-action="generate"><span id="generateLabel">生成三条</span></button></div></div>
+    <div class="suggest-info"><span id="suggestInfo">根据当前聊天与已授权记忆生成 · 不自动发送</span><button id="cancelGen" class="small-plain hidden" data-action="cancel-generate">取消任务</button></div>
+    <div id="suggestions" class="suggest-list"><div class="suggest-placeholder">先选择一种人设，然后生成三条可复制的回复建议。</div></div>
+    <div id="suggestProgress" class="suggest-progress hidden"><span class="spinner"></span><span id="progressText">正在准备上下文…</span></div>
+  </section>
+ </main>
+ <aside class="ai-panel" id="aiPanel">
+  <div class="ai-top"><span class="ai-icon" data-icon="sparkles"></span><div class="ai-title"><strong>AI 自由咨询</strong><small>有疑问，和我深入聊聊</small></div><button class="iconbtn mobile-ai-open" data-action="ai-close" aria-label="关闭 AI 咨询"><span data-icon="x"></span></button></div>
+  <div class="ai-linked"><span>当前讨论对象：<strong id="aiContact">请选择联系人</strong></span><button class="textbtn" data-action="drawer" data-tab="portrait">查看人物画像 <span data-icon="arrow-right"></span></button></div>
+  <div class="ai-scroll" id="aiScroll"></div>
+  <div class="ai-composer"><textarea id="aiInput" placeholder="比如：怎么回应这次邀约比较自然？" aria-label="向 AI 自由提问"></textarea><div class="composer-footer"><div class="composer-meta"><span>分析深度</span><select id="consultThinking" aria-label="自由咨询思考强度"><option value="Quick">快速</option><option value="Balanced" selected>平衡</option><option value="Deep">深度</option><option value="Max">Max</option></select></div><button id="aiSend" class="sendbtn" data-action="ask" title="发送咨询问题"><span data-icon="send"></span></button></div></div>
+ </aside>
+</div>
+<div id="aiOverlay" class="ai-overlay hidden" data-action="ai-close"></div>
+<div id="sideOverlay" class="mobile-side-scrim hidden" data-action="mobile-contacts"></div>
+<!-- Focus mode intentionally has exactly 3 candidates + two controls + expand. -->
+<section class="focus-view" id="focusView"><div class="focus-card">
+ <div class="focus-top"><button class="focus-expand" data-action="focus-expand"><span data-icon="maximize"></span> 展开</button><span class="focus-caption" id="focusName">请选择联系人 · 只读助手</span></div>
+ <div class="focus-cards" id="focusChoices"></div>
+ <div id="focusStatus" class="focus-status hidden"></div>
+ <div class="focus-controls"><button id="focusPersona" class="focus-control" data-action="focus-persona"><span data-icon="smile"></span><span id="focusPersonaName">人设 · 自然</span></button><button class="focus-control" data-action="generate"><span data-icon="refresh"></span>换一批</button></div>
+ <div id="focusDetails" class="focus-details hidden"><p id="focusExplanation">与工作区使用同一会话、建议与人设状态。切换联系人不会影响后台监听。</p><button class="secondary" data-action="workspace">返回完整工作区</button><button class="secondary" data-action="focus-choose">切换联系人</button></div>
+</div></section>
+<div id="scrim" class="scrim hidden" data-action="close-drawer"></div>
+<section class="drawer hidden" id="drawer" role="dialog" aria-modal="true" aria-label="应用管理与联系人详情">
+ <header class="drawer-head"><div class="headgroup"><span class="spark" data-icon="sliders"></span><div><h2>管理与详情</h2><small>功能跟随当前账号与联系人</small></div></div><button class="iconbtn" data-action="close-drawer" aria-label="关闭"><span data-icon="x"></span></button></header>
+ <div class="drawer-body"><nav class="drawer-tabs" id="drawerTabs"><button class="drawer-tab active" data-action="tab" data-tab="overview"><span data-icon="home"></span>总览</button><button class="drawer-tab" data-action="tab" data-tab="listening"><span data-icon="radio"></span>监听管理</button><button class="drawer-tab" data-action="tab" data-tab="conversation"><span data-icon="message"></span>会话详情</button><button class="drawer-tab" data-action="tab" data-tab="portrait"><span data-icon="users"></span>人物画像</button><button class="drawer-tab" data-action="tab" data-tab="self"><span data-icon="smile"></span>我的表达</button><button class="drawer-tab" data-action="tab" data-tab="memories"><span data-icon="book"></span>记忆与证据</button><button class="drawer-tab" data-action="tab" data-tab="identity"><span data-icon="users"></span>身份校准</button><button class="drawer-tab" data-action="tab" data-tab="history"><span data-icon="history"></span>历史补录</button><button class="drawer-tab" data-action="tab" data-tab="agent"><span data-icon="sparkles"></span>人设与 Skills</button><button class="drawer-tab" data-action="tab" data-tab="setup"><span data-icon="settings"></span>连接与配置</button><button class="drawer-tab" data-action="tab" data-tab="preferences"><span data-icon="sliders"></span>使用偏好</button><button class="drawer-tab" data-action="tab" data-tab="health"><span data-icon="radio"></span>运行状态</button></nav><div id="drawerContent" class="drawer-main"></div></div>
+ <footer class="drawer-footer">知间 · 本地优先 · 微信只读 · 建议由你复制后手动发送</footer>
+</section>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+</div>
+<script type="module" src="/v6/main.js"></script>
+</body></html>

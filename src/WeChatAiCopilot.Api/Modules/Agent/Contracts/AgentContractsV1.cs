@@ -37,6 +37,12 @@ public enum AgentReadCapabilityV1
 
 public sealed record AgentTaskV1
 {
+    [System.Text.Json.Serialization.JsonIgnore]
+    public WeChatAiCopilot.Api.Modules.Skills.SkillResolution? TrustedSkillSnapshot { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public WeChatAiCopilot.Api.Modules.Memory.Application.ExpressionV6? TrustedExpression { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public WeChatAiCopilot.Api.Modules.Agent.Application.QuickModelSelectionV6? TrustedQuickModel { get; init; }
     public AgentTaskTypeV1 TaskType { get; init; }
     public AgentExecutionProfileIdV1 ExecutionProfileId { get; init; } = AgentExecutionProfileIdV1.Quick;
     public Guid AccountId { get; init; }
@@ -209,6 +215,8 @@ public sealed record AgentRunV1
 /// </summary>
 public sealed record ScopedAgentRequestV1
 {
+    [System.Text.Json.Serialization.JsonIgnore]
+    public Func<string,CancellationToken,Task>? RecordSkillStage {get;init;}
     public AgentTaskV1? Task { get; init; }
     /// <summary>Optional server-configured Runtime model for this profile.</summary>
     public string? ModelId { get; init; }

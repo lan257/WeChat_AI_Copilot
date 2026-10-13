@@ -1,5 +1,6 @@
 using Npgsql;
 using WeChatAiCopilot.Api.Contracts.V1;
+using WeChatAiCopilot.Api.Modules.Operations;
 
 namespace WeChatAiCopilot.Api.Modules.Conversations.Api;
 
@@ -22,6 +23,8 @@ internal static class WebConversationScopeResolverV1
         var hasConversationId = context.Request.Query.ContainsKey("conversationId");
         if (!hasAccountId && !hasConversationId)
         {
+            if(context.Items[WebSessionServiceV1.IdentityItemKey] is WebSessionIdentityV1 {AllImported:false})
+                return Failed(context,400,"INVALID_CONVERSATION_SCOPE","An explicit authorized conversation is required.");
             var accountExternalId = configuration["Web:AllowedAccountExternalId"];
             var conversationExternalId = configuration["Web:AllowedConversationExternalId"];
             if (string.IsNullOrWhiteSpace(accountExternalId) || string.IsNullOrWhiteSpace(conversationExternalId))
@@ -44,6 +47,9 @@ internal static class WebConversationScopeResolverV1
             return Failed(context, StatusCodes.Status400BadRequest,
                 "INVALID_CONVERSATION_SCOPE", "Both accountId and conversationId must be valid UUIDs.");
         }
+
+        if(context.Items[WebSessionServiceV1.IdentityItemKey] is WebSessionIdentityV1 identity&&!identity.Allows(accountId,conversationId))
+            return Failed(context,404,"CONVERSATION_NOT_FOUND","The selected conversation is not available.");
 
         const string sql = """
             SELECT account.provider, account.external_account_id, conversation.external_conversation_id

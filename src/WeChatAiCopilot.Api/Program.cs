@@ -7,6 +7,8 @@ using WeChatAiCopilot.Api.Modules.Memory.Application;
 using WeChatAiCopilot.Api.Modules.Messages.Contracts;
 using WeChatAiCopilot.Api.Platform.Migrations;
 using WeChatAiCopilot.Api.Platform.Outbox;
+using WeChatAiCopilot.Api.Modules.Skills;
+using WeChatAiCopilot.Api.Modules.Operations;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.ConfigureHttpJsonOptions(options =>
@@ -25,6 +27,9 @@ if (!string.IsNullOrWhiteSpace(formalConnectionString))
     builder.Services.AddPostgresMemoryServices();
     builder.Services.AddConversationChangeOutboxDispatcher();
     builder.Services.AddAgentModule(builder.Configuration);
+    builder.Services.AddV6SkillServices();
+    builder.Services.AddOperationsModule();
+    builder.Services.AddAsyncAgentTasksV6();
 }
 
 var app = builder.Build();
@@ -72,5 +77,19 @@ app.MapWebConversationQueryEndpoints(builder.Configuration);
 app.MapSenderCalibrationCommandEndpoint(builder.Configuration);
 app.MapMemoryEndpoints(builder.Configuration);
 app.MapAgentEndpoints(builder.Configuration);
+if(formalDataSource is not null)
+{
+    app.MapV6SkillEndpoints(builder.Configuration);
+    app.MapSessionEndpoints(builder.Configuration);
+    app.MapOperationsEndpoints(builder.Configuration);
+    app.MapHistoryJobEndpointsV1(builder.Configuration);
+    app.MapAsyncAgentTasksV6(builder.Configuration);
+    app.MapPortraitEndpointsV6(builder.Configuration);
+    app.MapConversationActivityV6(builder.Configuration);
+}
+else
+{
+    app.MapGet("/api/session",()=>Results.Json(new{authenticated=false,error=new{code="DATABASE_NOT_CONFIGURED"}},statusCode:503));
+}
 
 app.Run();

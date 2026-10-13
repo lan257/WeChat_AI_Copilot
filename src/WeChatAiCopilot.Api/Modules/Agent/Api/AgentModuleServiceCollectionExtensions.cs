@@ -130,7 +130,8 @@ internal sealed class ConfiguredAgentTaskCoordinatorV1(
             services.GetRequiredService<IAgentPresetCatalogV1>(),
             options,
             services.GetService<TimeProvider>(),
-            services.GetService<IContextToolSessionFactoryV1>());
+            services.GetService<IContextToolSessionFactoryV1>(),
+            services.GetService<WeChatAiCopilot.Api.Modules.Skills.SkillResolutionService>());
     }
 
     private static AgentTaskCoordinatorOptionsV1? ReadOptions(IConfiguration configuration)

@@ -11,6 +11,7 @@ import os
 import sqlite3
 import sys
 import tempfile
+import threading
 import unittest
 import urllib.error
 from argparse import Namespace
@@ -273,6 +274,52 @@ class ReaderConfigTests(unittest.TestCase):
 
 
 class ReaderContractTests(unittest.TestCase):
+    def history_job(self) -> dict[str, object]:
+        return {"jobId": "a21b2460-9228-4e03-b714-fd54098575dc", "accountExternalId": self.settings["accountExternalId"],
+                "conversationExternalId": "test-authorized-contact", "fromUtc": "2026-09-01T00:00:00Z",
+                "toUtc": "2026-10-01T00:00:00Z", "maximumRows": 5000}
+
+    def test_history_queue_rejects_wrong_account_before_local_read(self) -> None:
+        job = self.history_job()
+        job["accountExternalId"] = "another-account"
+        with mock.patch.object(reader, "_get_history_control", return_value=job), mock.patch.object(reader, "_open_database") as opened:
+            with self.assertRaises(reader.ReaderFailure):
+                reader._run_queued_history(self.settings, object(), threading.Event())
+        opened.assert_not_called()
+
+    def test_history_queue_cancellation_keeps_batches_unsubmitted(self) -> None:
+        job = self.history_job()
+        with tempfile.TemporaryDirectory() as workdir, \
+                mock.patch.object(reader, "_get_history_control", side_effect=[job, {"status": "Cancelled"}]), \
+                mock.patch.object(reader, "_get_server_targets", return_value={"conversationExternalIds": [job["conversationExternalId"]]}), \
+                mock.patch.object(reader, "_open_database", return_value=(object(), Path(workdir))), \
+                mock.patch.object(reader, "_read_history", return_value=[{"synthetic": True}]), \
+                mock.patch.object(reader, "_post_contract") as post:
+            reader._run_queued_history(self.settings, object(), threading.Event())
+            post.assert_not_called()
+
+    def test_history_queue_empty_range_submits_real_final_zero_batch(self) -> None:
+        job = self.history_job()
+        with tempfile.TemporaryDirectory() as workdir, \
+                mock.patch.object(reader, "_get_history_control", side_effect=[job, {"status": "Running"}]), \
+                mock.patch.object(reader, "_get_server_targets", return_value={"conversationExternalIds": [job["conversationExternalId"]]}), \
+                mock.patch.object(reader, "_open_database", return_value=(object(), Path(workdir))), \
+                mock.patch.object(reader, "_read_history", return_value=[]), \
+                mock.patch.object(reader, "_post_contract") as post:
+            reader._run_queued_history(self.settings, object(), threading.Event())
+            payload = post.call_args.args[3]
+            self.assertEqual([], payload["items"])
+            self.assertTrue(payload["isLastBatch"])
+            self.assertEqual(job["jobId"], payload["jobId"])
+
+    def test_history_queue_revoked_target_prevents_local_read(self) -> None:
+        with mock.patch.object(reader, "_get_history_control", return_value=self.history_job()), \
+                mock.patch.object(reader, "_get_server_targets", return_value={"conversationExternalIds": []}), \
+                mock.patch.object(reader, "_open_database") as opened, mock.patch.object(reader, "_post_contract") as post:
+            reader._run_queued_history(self.settings, object(), threading.Event())
+            opened.assert_not_called()
+            self.assertEqual("READER_SCOPE_NOT_ALLOWED", post.call_args.args[3]["errorCode"])
+
     def setUp(self) -> None:
         self.settings = {
             "accountExternalId": "sample-account",
