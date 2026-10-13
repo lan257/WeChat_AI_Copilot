@@ -59,26 +59,42 @@ public static partial class ReaderManagementEndpointsV1
                 await ensureAccount.ExecuteNonQueryAsync(cancellationToken);
             }
 
+            const string ensureTargetSetSql = """
+                INSERT INTO copilot.reader_target_sets (account_id, target_version)
+                SELECT account.id, 0
+                FROM copilot.chat_accounts AS account
+                WHERE account.provider = @provider
+                  AND account.external_account_id = @account_external_id
+                ON CONFLICT (account_id) DO NOTHING;
+                """;
+            await using (var ensureTargetSet = new NpgsqlCommand(ensureTargetSetSql, connection, transaction))
+            {
+                ensureTargetSet.Parameters.AddWithValue("provider", provider);
+                ensureTargetSet.Parameters.AddWithValue("account_external_id", accountExternalId);
+                await ensureTargetSet.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            // The Reader caches its target list by version, so a target added here has to advance that
+            // version as well; otherwise the Reader sees one version carrying two different target sets.
             const string initializeSql = """
-                WITH new_set AS (
-                    INSERT INTO copilot.reader_target_sets (account_id, target_version)
-                    SELECT account.id, 0
+                WITH seeded AS (
+                    INSERT INTO copilot.monitored_conversation_targets (account_id, conversation_id)
+                    SELECT conversation.account_id, conversation.id
                     FROM copilot.chat_accounts AS account
-                    WHERE account.provider = @provider
-                      AND account.external_account_id = @account_external_id
-                    ON CONFLICT (account_id) DO NOTHING
+                    JOIN copilot.reader_target_sets AS target_set
+                      ON target_set.account_id = account.id
+                     AND target_set.target_version = 0
+                    JOIN copilot.conversations AS conversation
+                      ON conversation.account_id = account.id
+                     AND conversation.external_conversation_id = @legacy_conversation_external_id
+                     AND conversation.conversation_type = 'Direct'
+                    WHERE @legacy_conversation_external_id <> ''
+                    ON CONFLICT (account_id, conversation_id) DO NOTHING
                     RETURNING account_id
                 )
-                INSERT INTO copilot.monitored_conversation_targets (account_id, conversation_id)
-                SELECT account.id, conversation.id
-                FROM new_set
-                JOIN copilot.chat_accounts AS account ON account.id = new_set.account_id
-                JOIN copilot.conversations AS conversation
-                  ON conversation.account_id = account.id
-                 AND conversation.external_conversation_id = @legacy_conversation_external_id
-                 AND conversation.conversation_type = 'Direct'
-                WHERE @legacy_conversation_external_id <> ''
-                ON CONFLICT (account_id, conversation_id) DO NOTHING;
+                UPDATE copilot.reader_target_sets AS target_set
+                SET target_version = target_set.target_version + 1
+                WHERE target_set.account_id IN (SELECT account_id FROM seeded);
                 """;
             await using (var initialize = new NpgsqlCommand(initializeSql, connection, transaction))
             {

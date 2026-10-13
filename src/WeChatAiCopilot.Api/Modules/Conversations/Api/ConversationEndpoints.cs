@@ -40,6 +40,7 @@ public static class ConversationEndpoints
             return Error(context, StatusCodes.Status503ServiceUnavailable,
                 "READER_SCOPE_NOT_CONFIGURED", "The authorized Reader account is not configured.", retryable: false);
         }
+        var allowedConversation = configuration["Reader:AllowedConversationExternalId"];
 
         RawMessageEventV1? message;
         try
@@ -73,7 +74,7 @@ public static class ConversationEndpoints
             || !string.Equals(message.AccountExternalId, allowedAccount, StringComparison.Ordinal)
             || !await IsReaderTargetAllowedAsync(
                 dataSource, allowedProvider, message.AccountExternalId!, message.ConversationExternalId!,
-                allowedAccount, cancellationToken))
+                allowedAccount, allowedConversation, cancellationToken))
         {
             return Error(context, StatusCodes.Status403Forbidden,
                 "READER_SCOPE_NOT_ALLOWED", "The event is outside the configured Reader target.", retryable: false);
@@ -125,6 +126,7 @@ public static class ConversationEndpoints
             return Error(context, StatusCodes.Status503ServiceUnavailable,
                 "READER_SCOPE_NOT_CONFIGURED", "The authorized Reader account is not configured.", retryable: false);
         }
+        var allowedConversation = configuration["Reader:AllowedConversationExternalId"];
 
         HistoryBatchV1? batch;
         try
@@ -168,7 +170,7 @@ public static class ConversationEndpoints
         if (!string.Equals(batch!.AccountExternalId, allowedAccount, StringComparison.Ordinal)
             || !await IsReaderTargetAllowedAsync(
                 dataSource, allowedProvider, batch.AccountExternalId!, batch.ConversationExternalId!,
-                allowedAccount, cancellationToken)
+                allowedAccount, allowedConversation, cancellationToken)
             || batch.Items!.Any(item => item is null
                 || !string.Equals(item.Provider, allowedProvider, StringComparison.Ordinal)))
         {
@@ -200,12 +202,23 @@ public static class ConversationEndpoints
         string accountExternalId,
         string conversationExternalId,
         string? configuredAccountExternalId,
+        string? configuredConversationExternalId,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(configuredAccountExternalId)
             || !string.Equals(accountExternalId, configuredAccountExternalId, StringComparison.Ordinal))
         {
             return false;
+        }
+
+        // A store that has never ingested this account has no conversation row to match the target list
+        // against, so the one operator-approved conversation is allowed to create itself. Anything else
+        // still has to appear in that account's stored conversations and monitored targets.
+        if (!string.IsNullOrWhiteSpace(configuredConversationExternalId)
+            && string.Equals(conversationExternalId, configuredConversationExternalId, StringComparison.Ordinal)
+            && await HasNoStoredConversationsAsync(dataSource, provider, accountExternalId, cancellationToken))
+        {
+            return true;
         }
 
         const string sql = """
@@ -237,6 +250,28 @@ public static class ConversationEndpoints
         command.Parameters.AddWithValue("provider", provider);
         command.Parameters.AddWithValue("account_external_id", accountExternalId);
         command.Parameters.AddWithValue("conversation_external_id", conversationExternalId);
+        return (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
+    }
+
+    private static async Task<bool> HasNoStoredConversationsAsync(
+        NpgsqlDataSource dataSource,
+        string provider,
+        string accountExternalId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT NOT EXISTS (
+                SELECT 1
+                FROM copilot.conversations AS conversation
+                JOIN copilot.chat_accounts AS account ON account.id = conversation.account_id
+                WHERE account.provider = @provider
+                  AND account.external_account_id = @account_external_id
+            );
+            """;
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("provider", provider);
+        command.Parameters.AddWithValue("account_external_id", accountExternalId);
         return (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
     }
 
