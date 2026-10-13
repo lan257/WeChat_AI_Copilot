@@ -62,7 +62,8 @@ internal sealed class StructuredCodexCliExecutorV1 : IStructuredCodexCliExecutor
         string prompt,
         string outputSchemaJson,
         TimeSpan timeout,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? modelId = null)
     {
         if (cancellationToken.IsCancellationRequested)
         {
@@ -83,6 +84,11 @@ internal sealed class StructuredCodexCliExecutorV1 : IStructuredCodexCliExecutor
         if (timeout <= TimeSpan.Zero)
         {
             return Result(StructuredCodexCliExecutionStatusV1.TimedOut);
+        }
+
+        if (modelId is not null && !IsSafeModelId(modelId))
+        {
+            return Result(StructuredCodexCliExecutionStatusV1.CliConfigurationInvalid);
         }
 
         try
@@ -129,7 +135,7 @@ internal sealed class StructuredCodexCliExecutorV1 : IStructuredCodexCliExecutor
             var processRequest = new CodexCliProcessRequestV1
             {
                 ExecutablePath = command.ExecutablePath,
-                Arguments = command.PrefixArguments.Concat(BuildArguments(tempDirectory, schemaPath, outputPath)).ToArray(),
+                Arguments = command.PrefixArguments.Concat(BuildArguments(tempDirectory, schemaPath, outputPath, modelId)).ToArray(),
                 WorkingDirectory = tempDirectory,
                 StandardInput = prompt,
                 Timeout = timeout,
@@ -250,23 +256,41 @@ internal sealed class StructuredCodexCliExecutorV1 : IStructuredCodexCliExecutor
         }
     }
 
-    private static IReadOnlyList<string> BuildArguments(string workingDirectory, string schemaPath, string outputPath) =>
-    [
-        "exec",
-        "--sandbox", "read-only",
-        "--disable", "shell_tool",
-        "--disable", "multi_agent",
-        "--disable", "remote_plugin",
-        "--config", "mcp_servers={}",
-        "--config", "web_search=\"disabled\"",
-        "--ephemeral",
-        "--ignore-user-config",
-        "--skip-git-repo-check",
-        "--cd", workingDirectory,
-        "--output-schema", schemaPath,
-        "--output-last-message", outputPath,
-        "-"
-    ];
+    private static IReadOnlyList<string> BuildArguments(
+        string workingDirectory,
+        string schemaPath,
+        string outputPath,
+        string? modelId)
+    {
+        var arguments = new List<string>
+        {
+            "exec",
+            "--sandbox", "read-only",
+            "--disable", "shell_tool",
+            "--disable", "multi_agent",
+            "--disable", "remote_plugin",
+            "--config", "mcp_servers={}",
+            "--config", "web_search=\"disabled\"",
+            "--ephemeral",
+            "--ignore-user-config",
+            "--skip-git-repo-check",
+            "--cd", workingDirectory,
+            "--output-schema", schemaPath,
+            "--output-last-message", outputPath
+        };
+        if (modelId is not null)
+        {
+            arguments.Add("--model");
+            arguments.Add(modelId);
+        }
+
+        arguments.Add("-");
+        return arguments;
+    }
+
+    private static bool IsSafeModelId(string modelId) =>
+        modelId.Length is > 0 and <= 80
+        && modelId.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_' or '.');
 
     private static IReadOnlyDictionary<string, string>? BuildWhitelistedEnvironment(
         Func<string, string?> getEnvironmentVariable)

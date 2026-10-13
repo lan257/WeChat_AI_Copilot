@@ -64,6 +64,10 @@ app.MapGet("/health/ready", async (IServiceProvider services, CancellationToken 
     }
 });
 app.MapConversationEndpoints(builder.Configuration);
+app.MapConversationDirectoryEndpointsV1(builder.Configuration);
+app.MapReaderManagementEndpointsV1(builder.Configuration);
+app.MapSystemStatusEndpointsV1(builder.Configuration);
+app.MapReaderDiscoveryEndpointsV1(builder.Configuration);
 app.MapWebConversationQueryEndpoints(builder.Configuration);
 app.MapSenderCalibrationCommandEndpoint(builder.Configuration);
 app.MapMemoryEndpoints(builder.Configuration);

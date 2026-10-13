@@ -8,8 +8,24 @@
   const workspacePages = {
     chat: $('chatPage'),
     connection: $('connectionPage'),
-    memory: $('memoryPage')
+    memory: $('memoryPage'),
+    status: $('statusPage')
   };
+  const refreshSystemStatusButton = $('refreshSystemStatus');
+  const systemStatusFeedback = $('systemStatusFeedback');
+  const apiHealthValue = $('apiHealthValue');
+  const apiHealthDetail = $('apiHealthDetail');
+  const databaseHealthValue = $('databaseHealthValue');
+  const databaseHealthDetail = $('databaseHealthDetail');
+  const agentRuntimeValue = $('agentRuntimeValue');
+  const agentRuntimeDetail = $('agentRuntimeDetail');
+  const readerStatusList = $('readerStatusList');
+  const agentRunValue = $('agentRunValue');
+  const agentRunDetail = $('agentRunDetail');
+  const memoryRuntimeValue = $('memoryRuntimeValue');
+  const memoryRuntimeDetail = $('memoryRuntimeDetail');
+  const historyJobsValue = $('historyJobsValue');
+  const historyJobsDetail = $('historyJobsDetail');
   const expandButton = $('expandMinimal');
   const minimalDetails = $('minimalDetails');
   const webAuthForm = $('webAuthForm');
@@ -19,13 +35,21 @@
   const apiStatus = $('apiStatus');
   const serviceIndicator = $('serviceIndicator');
   const serviceIndicatorText = $('serviceIndicatorText');
+  const accountSelect = $('accountSelect');
+  const chatAccountSelect = $('chatAccountSelect');
+  const conversationSelect = $('conversationSelect');
+  const chatConversationSelect = $('chatConversationSelect');
+  const discoverReaderSessionsButton = $('discoverReaderSessions');
+  const discoveryStatus = $('discoveryStatus');
+  const readerTargetList = $('readerTargetList');
+  const readerTargetSearch = $('readerTargetSearch');
+  const saveReaderTargetsButton = $('saveReaderTargets');
+  const readerTargetStatus = $('readerTargetStatus');
   const currentSessionValue = $('currentSessionValue');
   const currentSessionStatus = $('currentSessionStatus');
-  const conversationOption = $('conversationOption');
   const chatSessionValue = $('chatSessionValue');
   const chatSessionType = $('chatSessionType');
   const chatCaptureStatus = $('chatCaptureStatus');
-  const chatConversationOption = $('chatConversationOption');
   const captureStateValue = $('captureStateValue');
   const memoryCurrentSession = $('memoryCurrentSession');
   const minimalCurrentSession = $('minimalCurrentSession');
@@ -36,8 +60,8 @@
   const identityHelp = $('identityHelp');
   const selfIdentity = document.querySelector('[data-identity="self"]');
   const contactIdentity = document.querySelector('[data-identity="contact"]');
+  const confirmCurrentButton = $('confirmCurrent');
   const swapButton = $('swapPreview');
-  const confirmButton = $('confirmPerspective');
   const previewState = $('previewState');
   const confirmHelp = $('confirmHelp');
   const toast = $('toast');
@@ -55,8 +79,11 @@
   const suggestionStateDetail = $('suggestionStateDetail');
   const suggestionList = $('suggestionList');
   const personaSelect = $('personaSelect');
+  const replyProfileSelect = $('replyProfileSelect');
+  const consultationProfileSelect = $('consultationProfileSelect');
   const reloadPersonasButton = $('reloadPersonas');
   const generateSuggestionsButton = $('generateSuggestions');
+  const cancelSuggestionButton = $('cancelSuggestion');
   const suggestionFeedback = $('suggestionFeedback');
   const minimalStatus = $('minimalStatus');
   const minimalSuggestionState = $('minimalSuggestionState');
@@ -69,16 +96,27 @@
   const consultationForm = $('consultationForm');
   const consultationQuestion = $('consultQuestion');
   const consultationSubmit = $('consultSubmit');
+  const cancelConsultationButton = $('cancelConsultation');
   const consultationHint = $('consultationHint');
   const consultationNotice = $('consultationNotice');
 
   let webToken = null;
   let currentConversation = null;
+  let selectedAccountId = null;
+  let selectedConversationId = null;
+  let directoryAccounts = [];
+  let directoryConversations = [];
+  let readerTargetVersion = 0;
+  let pendingReaderTargetIds = null;
+  let pendingReaderTargetAccountId = null;
+  let discoveryPollTimer = null;
+  let activeDiscoveryJobId = null;
   let currentMessageSnapshot = null;
+  let olderPageController = null;
+  let olderPageInProgress = false;
   let currentPerspectiveResponse = null;
   let activeScope = null;
   let previewPair = null;
-  let swappedPreview = false;
   let requestVersion = 0;
   let activeController = null;
   let toastTimer;
@@ -95,12 +133,18 @@
   let revisionPollController = null;
   let revisionPollInProgress = false;
   let lastMessageSetRevision = null;
+  let systemStatusController = null;
+  let systemStatusRequestVersion = 0;
   let pollFailureSnapshot = null;
   let personaCatalog = [];
   let personaCatalogStatus = 'idle';
   let personaCatalogFeedback = '';
   let personaCatalogVersion = 0;
   let personaCatalogController = null;
+  let executionProfileCatalog = [];
+  let executionProfileCatalogStatus = 'idle';
+  let executionProfileController = null;
+  let workspaceReplyProfileId = 'Quick';
   let suggestionController = null;
   let consultationController = null;
   let consultationHistoryController = null;
@@ -120,13 +164,197 @@
       if (active) button.setAttribute('aria-current', 'page');
       else button.removeAttribute('aria-current');
     });
+    if (page === 'status') void loadSystemStatus();
+    else if (systemStatusController) {
+      systemStatusController.abort();
+      systemStatusController = null;
+      systemStatusRequestVersion++;
+    }
     if (page === 'chat' && activeAgentState?.threadId && !activeAgentState.historyLoaded && !activeAgentState.historyLoading) {
       void restoreConsultationHistory(activeAgentState);
     }
   }
 
+  function setSystemStatusValue(element, label, state) {
+    element.textContent = label;
+    element.dataset.state = state;
+  }
+
+  function readerStateLabel(state, targetCount) {
+    switch (String(state || '').toLowerCase()) {
+      case 'listening': return `在线监听 · ${targetCount} 个会话`;
+      case 'idle': return '在线 · 暂无监听目标';
+      case 'starting': return '正在启动';
+      case 'error': return '运行错误';
+      case 'stopped': return '已停止';
+      case 'offline': return '离线';
+      default: return '状态未知';
+    }
+  }
+
+  function renderReaderSystemStatus(status) {
+    readerStatusList.replaceChildren();
+    const accounts = Array.isArray(status.readerAccounts) ? status.readerAccounts : [];
+    if (status.readerState !== 'Available') {
+      const empty = document.createElement('p');
+      empty.className = 'system-status-empty';
+      empty.textContent = status.readerState === 'NotAvailable'
+        ? '数据库未配置，Reader 状态不可读取。'
+        : 'Reader 状态数据暂不可用。';
+      readerStatusList.append(empty);
+      return;
+    }
+    if (!accounts.length) {
+      const empty = document.createElement('p');
+      empty.className = 'system-status-empty';
+      empty.textContent = '尚无 Reader 心跳记录；这不代表 Reader 正在运行。';
+      readerStatusList.append(empty);
+      return;
+    }
+
+    accounts.forEach((account) => {
+      const row = document.createElement('article');
+      row.className = 'system-status-row';
+      const main = document.createElement('div');
+      main.className = 'system-status-row-main';
+      const name = document.createElement('strong');
+      name.textContent = account.displayName || account.provider || '本机微信账号';
+      const details = document.createElement('span');
+      const targetCount = Number.isInteger(account.listeningTargetCount) ? account.listeningTargetCount : 0;
+      details.textContent = `最近心跳：${formatTime(account.lastHeartbeatAtUtc)} · 监听目标 ${targetCount} 个`;
+      main.append(name, details);
+      const state = document.createElement('span');
+      const stateText = readerStateLabel(account.state, targetCount);
+      state.className = `system-status-badge is-${String(account.state || 'unknown').toLowerCase()}`;
+      state.textContent = stateText;
+      row.append(main, state);
+      if (typeof account.lastErrorCode === 'string' && account.lastErrorCode) {
+        const error = document.createElement('small');
+        error.className = 'system-status-error';
+        error.textContent = `最近错误代码：${account.lastErrorCode}`;
+        row.append(error);
+      }
+      readerStatusList.append(row);
+    });
+  }
+
+  function renderLatestAgentRun(status) {
+    const run = status.latestAgentRun;
+    if (!run) {
+      setSystemStatusValue(agentRunValue,
+        status.agentRunState === 'Available' ? '暂无运行记录' : '不可用',
+        status.agentRunState === 'Available' ? 'muted' : 'error');
+      agentRunDetail.textContent = status.agentRunState === 'Available'
+        ? '尚未发现已记录的建议或咨询任务。'
+        : '运行审计数据暂不可读取。';
+      return;
+    }
+
+    const task = String(run.taskType || '').toLowerCase() === 'replycandidates' ? '回复建议' : 'AI 咨询';
+    const runState = String(run.status || '').toLowerCase();
+    const labels = { running: '运行中', completed: '已完成', failed: '失败', cancelled: '已取消' };
+    const state = runState === 'completed' ? 'success' : runState === 'running' ? 'loading' : 'error';
+    setSystemStatusValue(agentRunValue, `${task} · ${labels[runState] || '状态未知'}`, state);
+    const parts = [
+      `运行方式：${run.runtimeName || '未知'}`,
+      `开始时间：${formatTime(run.startedAtUtc)}`
+    ];
+    if (run.endedAtUtc) parts.push(`结束时间：${formatTime(run.endedAtUtc)}`);
+    if (run.errorCode) parts.push(`错误代码：${run.errorCode}`);
+    agentRunDetail.textContent = parts.join(' · ');
+  }
+
+  async function loadSystemStatus() {
+    if (!webToken) {
+      refreshSystemStatusButton.disabled = true;
+      systemStatusFeedback.textContent = '请先在“接入与会话”完成授权。';
+      return;
+    }
+    if (systemStatusController) systemStatusController.abort();
+    const controller = new AbortController();
+    const requestVersion = ++systemStatusRequestVersion;
+    systemStatusController = controller;
+    refreshSystemStatusButton.disabled = true;
+    systemStatusFeedback.textContent = '正在读取运行状态…';
+
+    const [apiResult, databaseResult, statusResult] = await Promise.all([
+      apiRequest('/health/live', { signal: controller.signal }),
+      apiRequest('/health/ready', { signal: controller.signal }),
+      apiRequest('/api/system/status', { signal: controller.signal })
+    ]);
+    if (requestVersion !== systemStatusRequestVersion || apiResult.aborted || databaseResult.aborted || statusResult.aborted) return;
+    if (isUnauthorized(statusResult)) {
+      handleUnauthorized();
+      return;
+    }
+
+    if (apiResult.ok && String(apiResult.data?.status || '').toLowerCase() === 'ok') {
+      setSystemStatusValue(apiHealthValue, '在线', 'success');
+      apiHealthDetail.textContent = 'API 存活探针正常响应。';
+    } else {
+      setSystemStatusValue(apiHealthValue, '不可用', 'error');
+      apiHealthDetail.textContent = 'API 存活探针未成功响应。';
+    }
+
+    if (databaseResult.ok && String(databaseResult.data?.database || '').toLowerCase() === 'ready') {
+      setSystemStatusValue(databaseHealthValue, '就绪', 'success');
+      databaseHealthDetail.textContent = 'PostgreSQL 连通性检查通过。';
+    } else {
+      const databaseState = String(databaseResult.data?.database || '').toLowerCase();
+      const label = databaseState === 'not-configured' ? '未配置' : databaseState === 'unavailable' ? '不可用' : '未就绪';
+      setSystemStatusValue(databaseHealthValue, label, 'error');
+      databaseHealthDetail.textContent = '数据库未通过就绪检查，消息与 AI 功能可能不可用。';
+    }
+
+    if (!statusResult.ok || !statusResult.data || typeof statusResult.data !== 'object') {
+      renderReaderSystemStatus({ readerState: 'Unavailable', readerAccounts: [] });
+      renderLatestAgentRun({ agentRunState: 'Unavailable', latestAgentRun: null });
+      setSystemStatusValue(agentRuntimeValue, '不可用', 'error');
+      agentRuntimeDetail.textContent = '系统状态接口没有返回有效信息。';
+      setSystemStatusValue(memoryRuntimeValue, '不可用', 'error');
+      memoryRuntimeDetail.textContent = '自动记忆运行配置暂不可读取。';
+      setSystemStatusValue(historyJobsValue, '不可用', 'error');
+      historyJobsDetail.textContent = '历史补录任务状态暂不可读取。';
+      systemStatusFeedback.textContent = `部分状态不可用：${formatRequestError(statusResult).message}`;
+    } else {
+      const status = statusResult.data;
+      renderReaderSystemStatus(status);
+      renderLatestAgentRun(status);
+      const runtimeLabels = { codexcli: 'Codex CLI', fake: 'Fake 演示运行时', disabled: '未配置' };
+      const runtimeKey = String(status.configuredRuntime || '').toLowerCase();
+      setSystemStatusValue(agentRuntimeValue, runtimeLabels[runtimeKey] || '未知', runtimeKey === 'disabled' ? 'error' : 'success');
+      agentRuntimeDetail.textContent = runtimeKey === 'codexcli' && !status.quickModelConfigured
+        ? '服务器已选择 Codex CLI，但未配置独立 Quick model；该状态不代表任务已成功或运行速度达标。'
+        : '此处显示服务器运行时配置；任务成败以最近运行记录为准。';
+      const memoryConfigured = String(status.memoryConsolidationRuntime || '').toLowerCase() === 'codexcli';
+      setSystemStatusValue(memoryRuntimeValue, memoryConfigured ? '已选择 Codex CLI' : '未启用', memoryConfigured ? 'success' : 'muted');
+      memoryRuntimeDetail.textContent = memoryConfigured
+        ? '服务器已选择 Codex CLI；本状态不表示已有记忆沉淀成功。'
+        : '服务器未选择自动记忆生成运行时；不会把人工记忆误报为自动学习。';
+      const historyImplemented = String(status.historyJobsState || '').toLowerCase() !== 'notimplemented';
+      setSystemStatusValue(historyJobsValue, historyImplemented ? '可用' : '未实现', historyImplemented ? 'success' : 'error');
+      historyJobsDetail.textContent = historyImplemented
+        ? '请在接入与会话页面查看任务详情。'
+        : '历史补录任务进度与取消接口尚未实现。';
+      systemStatusFeedback.textContent = '运行状态已更新；页面仅展示状态元数据，不包含聊天正文。';
+    }
+
+    if (systemStatusController === controller) systemStatusController = null;
+    refreshSystemStatusButton.disabled = false;
+  }
+
   function setMode(mode) {
     const minimal = mode === 'minimal';
+    const wasMinimal = document.body.classList.contains('is-minimal');
+    if (minimal && !wasMinimal) {
+      workspaceReplyProfileId = replyProfileSelect.value || workspaceReplyProfileId;
+      if (executionProfileCatalog.some((profile) => profile.executionProfileId === 'Quick')) {
+        replyProfileSelect.value = 'Quick';
+      }
+    } else if (!minimal && wasMinimal
+      && executionProfileCatalog.some((profile) => profile.executionProfileId === workspaceReplyProfileId)) {
+      replyProfileSelect.value = workspaceReplyProfileId;
+    }
     workspaceView.hidden = minimal;
     minimalView.hidden = !minimal;
     document.body.classList.toggle('is-minimal', minimal);
@@ -145,6 +373,7 @@
       minimalDetails.hidden = true;
       setWorkspacePage('chat');
     }
+    if (activeAgentState) renderAgentState();
   }
 
   function setApiStatus(message, state = 'idle', fromPoll = false) {
@@ -235,7 +464,6 @@
     activeScope = null;
     currentPerspectiveResponse = null;
     previewPair = null;
-    swappedPreview = false;
     perspectiveSummary.textContent = title;
     perspectiveStatus.textContent = title;
     identityHelp.textContent = detail;
@@ -243,31 +471,48 @@
     contactIdentity.textContent = '暂不可用';
     previewState.textContent = detail;
     confirmHelp.textContent = detail;
+    confirmCurrentButton.hidden = true;
+    confirmCurrentButton.disabled = true;
     swapButton.disabled = true;
-    confirmButton.disabled = true;
-    confirmButton.textContent = '确认身份校准';
     setPill(perspectiveStatus, title, state === 'error' ? 'error' : 'muted');
   }
 
   function resetWorkspaceForNoToken() {
     stopRevisionPolling();
+    if (systemStatusController) systemStatusController.abort();
+    systemStatusController = null;
+    systemStatusRequestVersion++;
+    if (olderPageController) olderPageController.abort();
+    olderPageController = null;
+    olderPageInProgress = false;
     resetAgentForNoToken();
     currentConversation = null;
+    selectedAccountId = null;
+    selectedConversationId = null;
+    directoryAccounts = [];
+    directoryConversations = [];
+    readerTargetVersion = 0;
+    pendingReaderTargetIds = null;
+    pendingReaderTargetAccountId = null;
+    activeDiscoveryJobId = null;
+    if (discoveryPollTimer !== null) window.clearTimeout(discoveryPollTimer);
+    discoveryPollTimer = null;
     currentMessageSnapshot = null;
     currentSessionValue.textContent = '等待授权读取当前会话';
     chatSessionValue.textContent = '等待授权读取当前会话';
-    chatSessionType.textContent = '服务器授权范围固定，不由此页切换';
-    chatConversationOption.textContent = '等待授权读取';
+    chatSessionType.textContent = '选择会话后读取其已授权消息';
     captureStateValue.textContent = '等待授权读取';
     memoryCurrentSession.textContent = '等待授权读取';
     minimalCurrentSession.textContent = '等待授权读取';
     setPill(currentSessionStatus, '等待授权', 'pending');
     setPill(chatCaptureStatus, '等待授权', 'pending');
-    conversationOption.textContent = '服务端固定会话';
     setPill(messageStatusPill, '等待授权', 'muted');
     setMessageState('尚未读取聊天记录', '请先在“接入与会话”完成授权读取。当前页面没有预置或模拟聊天内容。');
-    setIdentityUnavailable('等待授权', '授权读取后展示当前会话的身份范围。交换预览只改变页面标签；只有点击确认按钮并确认摘要后才会提交校准。');
+    setIdentityUnavailable('等待授权', '授权读取后展示当前会话的身份范围。点击“互转身份”并确认摘要后，服务端才会提交校准。');
     resetMemoryForNoToken();
+    renderDirectorySelectors();
+    setDiscoveryStatus('等待 Web 授权');
+    setReaderTargetFeedback('');
   }
 
   function setMemoryFeedback(message, state = 'idle') {
@@ -633,7 +878,7 @@
     currentSessionValue.textContent = '正在读取服务端授权会话';
     chatSessionValue.textContent = '正在读取服务端授权会话';
     chatSessionType.textContent = '等待会话和采集状态';
-    chatConversationOption.textContent = '正在读取';
+    renderDirectorySelectors();
     captureStateValue.textContent = '正在读取';
     memoryCurrentSession.textContent = '正在读取';
     minimalCurrentSession.textContent = '正在读取';
@@ -659,6 +904,7 @@
     const body = result.data;
     const detail = body && (body.error || body.Error);
     const code = detail && (detail.code || detail.Code);
+    const serverMessage = detail && (detail.message || detail.Message);
     const retryable = detail && (detail.retryable ?? detail.Retryable);
     const status = result.status;
     const known = {
@@ -668,7 +914,13 @@
       DATABASE_NOT_CONFIGURED: ['正式数据库尚未配置，当前会话数据不可读取。', 'error'],
       DATABASE_UNAVAILABLE: ['正式数据库暂不可用，请稍后重新读取。', 'error'],
       MESSAGE_QUERY_NOT_CONFIGURED: ['消息查询服务尚未配置。', 'error'],
-      CURRENT_CONVERSATION_NOT_FOUND: ['服务端授权范围内没有可读取的当前会话。', 'error'],
+      CURRENT_CONVERSATION_NOT_FOUND: ['所选账号与会话没有可读取的记录。', 'error'],
+      CONVERSATION_NOT_FOUND: ['所选账号与会话没有可读取的记录。', 'error'],
+      INVALID_CONVERSATION_SCOPE: ['账号或会话选择无效，请重新选择。', 'error'],
+      ACCOUNT_NOT_ACTIVE_FOR_READER: ['此账号不是本机当前活动的 Reader 账号，不能修改其监听集合。', 'error'],
+      READER_TARGET_VERSION_CONFLICT: ['监听目标已在其他位置更新，请重新读取后再保存。', 'error'],
+      READER_TARGET_NOT_FOUND: ['监听列表中有会话已失效，请重新读取目录。', 'error'],
+      READER_DISCOVERY_JOB_NOT_FOUND: ['会话目录扫描任务已失效，请重新发起。', 'error'],
       INVALID_LIMIT: ['消息读取参数无效。', 'error'],
       INVALID_ANCHOR: ['消息分页位置无效。', 'error'],
       SENDER_SCOPE_AMBIGUOUS: ['同一身份命名空间对应多个表或分片范围，无法安全确认。', 'error'],
@@ -691,6 +943,10 @@
       AGENT_RUN_NOT_FOUND: ['AI 运行记录不存在。', 'error'],
       AGENT_EXECUTION_FAILED: ['AI 任务未能完成。', 'error'],
       AGENT_RESULT_INVALID: ['AI 返回结果未通过合同校验。', 'error'],
+      AGENT_TOOL_CAPABILITY_DENIED: ['当前服务端未启用此档位所需的受限历史检索能力。', 'error'],
+      AGENT_HISTORY_SEARCH_FAILED: ['当前会话的有界历史检索失败；未展示未复核的建议。', 'error'],
+      CONTEXT_REVISION_CHANGED: ['生成期间会话内容发生变化；本批结果已丢弃，请重新生成。', 'error'],
+      CODEX_REVIEW_OUTPUT_INVALID: ['Max 复核结果未通过格式校验；未展示未复核建议。', 'error'],
       AGENT_STORAGE_UNAVAILABLE: ['AI 结果暂时无法保存或读取。', 'error'],
       INVALID_SUGGESTION_REQUEST: ['建议请求无效；请选择服务器提供的人设后重试。', 'error'],
       INVALID_CONSULTATION_REQUEST: ['咨询问题无效；请检查问题内容后重试。', 'error'],
@@ -704,10 +960,13 @@
     }
     const mapped = known[code];
     if (mapped) {
+      const contractCode = code === 'AGENT_RESULT_INVALID' && typeof serverMessage === 'string'
+        ? serverMessage.match(/\(([A-Z][A-Z0-9_]{1,63})\)\.?$/)?.[1]
+        : null;
       return {
         code,
         title: mapped[0],
-        detail: mapped[0],
+        detail: contractCode ? `校验代码：${contractCode}` : mapped[0],
         state: mapped[1],
         retryable: retryable === true
       };
@@ -740,7 +999,17 @@
         options.body = JSON.stringify(body);
       }
 
-      const response = await fetch(path, options);
+      const requestUrl = new URL(path, window.location.href);
+      const pathOnly = requestUrl.pathname;
+      const requiresConversationScope = pathOnly.startsWith('/api/conversations/current')
+        || (pathOnly.startsWith('/api/ai/')
+          && pathOnly !== '/api/ai/personas'
+          && pathOnly !== '/api/ai/execution-profiles');
+      if (requiresConversationScope && selectedAccountId && selectedConversationId) {
+        requestUrl.searchParams.set('accountId', selectedAccountId);
+        requestUrl.searchParams.set('conversationId', selectedConversationId);
+      }
+      const response = await fetch(requestUrl, options);
       let data = null;
       try { data = await response.json(); } catch { /* Keep an empty body as a normal API error state. */ }
       return { ok: response.ok, status: response.status, data };
@@ -850,6 +1119,11 @@
     personaCatalog = [];
     personaCatalogStatus = 'idle';
     personaCatalogFeedback = '';
+    executionProfileCatalog = [];
+    executionProfileCatalogStatus = 'idle';
+    if (executionProfileController) executionProfileController.abort();
+    executionProfileController = null;
+    renderExecutionProfileSelectors();
     renderAgentState();
   }
 
@@ -874,6 +1148,9 @@
     renderAgentState();
     if (personaCatalogStatus === 'idle' || personaCatalogStatus === 'error' || personaCatalogStatus === 'unavailable') {
       void loadPersonaCatalog();
+    }
+    if (executionProfileCatalogStatus === 'idle' || executionProfileCatalogStatus === 'error') {
+      void loadExecutionProfileCatalog();
     }
     if (activeAgentState.threadId && !activeAgentState.historyLoaded && !activeAgentState.historyLoading) {
       void restoreConsultationHistory(activeAgentState);
@@ -988,9 +1265,10 @@
         question.textContent = turn.userInput;
         const answerLabel = document.createElement('span');
         answerLabel.className = 'consultation-speaker is-ai';
+        const executionProfile = executionProfileCatalog.find((item) => item.executionProfileId === turn.executionProfileId);
         answerLabel.textContent = isDemoRuntime
           ? 'FakeRuntime 固定演示 · 非真实 AI 回答'
-          : turn.runtimeName ? `AI 咨询 · ${turn.runtimeName}` : 'AI 咨询';
+          : `${executionProfile ? `${executionProfile.label} · ` : ''}${turn.runtimeName ? `AI 咨询 · ${turn.runtimeName}` : 'AI 咨询'}`;
         const answer = document.createElement('p');
         answer.className = 'consultation-answer-text';
         answer.textContent = turn.answer;
@@ -1010,13 +1288,20 @@
   function renderAgentState() {
     const authorized = Boolean(webToken && currentConversation && activeAgentState);
     renderPersonaSelect();
+    renderExecutionProfileSelectors();
     const catalogReady = personaCatalogStatus === 'ready' && personaCatalog.length > 0;
+    const profileCatalogReady = executionProfileCatalogStatus === 'ready' && executionProfileCatalog.length > 0;
     const selectedPersona = personaCatalog.find((item) => item.personaPresetId === activeAgentState?.selectedPersonaPresetId);
+    const selectedProfileId = replyProfileSelect.value || 'Quick';
     const batch = activeAgentState?.suggestionBatch || null;
-    const batchMatchesPersona = Boolean(batch && selectedPersona && batch.personaPresetId === selectedPersona.personaPresetId);
+    const batchMatchesPersona = Boolean(batch && selectedPersona && batch.personaPresetId === selectedPersona.personaPresetId
+      && (batch.executionProfileId || 'Balanced') === selectedProfileId);
 
     personaSelect.disabled = !authorized || !catalogReady || activeAgentState?.suggestionBusy === true;
-    generateSuggestionsButton.disabled = !authorized || !catalogReady || !selectedPersona || activeAgentState?.suggestionBusy === true;
+    replyProfileSelect.disabled = !authorized || !profileCatalogReady || activeAgentState?.suggestionBusy === true;
+    generateSuggestionsButton.disabled = !authorized || !catalogReady || !profileCatalogReady || !selectedPersona || activeAgentState?.suggestionBusy === true;
+    cancelSuggestionButton.hidden = activeAgentState?.suggestionBusy !== true;
+    cancelSuggestionButton.disabled = activeAgentState?.suggestionBusy !== true;
     generateSuggestionsButton.textContent = activeAgentState?.suggestionBusy
       ? '正在生成…'
       : batchMatchesPersona ? '换一批建议' : '生成三条建议';
@@ -1032,6 +1317,12 @@
     } else if (personaCatalogStatus === 'error' || personaCatalogStatus === 'unavailable') {
       setSuggestionState('人设目录不可用', personaCatalogFeedback || '服务器尚未提供可用人设；建议生成已禁用。', 'error');
       setPill(suggestionStatus, '不可用', 'error');
+    } else if (!profileCatalogReady) {
+      setSuggestionState(
+        executionProfileCatalogStatus === 'error' ? '档位目录不可用' : '读取 AI 档位',
+        executionProfileCatalogStatus === 'error' ? '服务器未返回受控执行档位；建议生成已禁用。' : '正在读取服务器执行档位目录…',
+        executionProfileCatalogStatus === 'error' ? 'error' : 'loading');
+      setPill(suggestionStatus, executionProfileCatalogStatus === 'error' ? '不可用' : '读取中', executionProfileCatalogStatus === 'error' ? 'error' : 'pending');
     } else if (!catalogReady) {
       setSuggestionState('等待服务器人设目录', '当前没有可用人设配置，不会提交建议请求。', 'idle');
       setPill(suggestionStatus, '未配置', 'muted');
@@ -1040,7 +1331,7 @@
       setPill(suggestionStatus, '生成中', 'pending');
     } else if (!batchMatchesPersona) {
       const detail = activeAgentState?.suggestionError
-        || (batch ? '当前所选人设与上一批结果不同，请生成新的建议。' : '服务端尚无本会话建议批次。点击“生成三条建议”后才会请求 AI。');
+        || (batch ? '当前人设或执行档位与上一批不同，请生成新的建议。' : '服务端尚无本会话建议批次。点击“生成三条建议”后才会请求 AI。');
       setSuggestionState(activeAgentState?.suggestionError ? '建议暂不可用' : '尚无当前人设建议', detail, activeAgentState?.suggestionError ? 'error' : 'idle');
       setPill(suggestionStatus, activeAgentState?.suggestionError ? '请求失败' : '待生成', activeAgentState?.suggestionError ? 'error' : 'muted');
     } else {
@@ -1065,8 +1356,8 @@
       setSuggestionFeedback(activeAgentState?.suggestionError || '', activeAgentState?.suggestionError ? 'error' : 'idle');
     }
 
-    minimalPersonaButton.disabled = !authorized || !catalogReady || activeAgentState?.suggestionBusy === true;
-    minimalRefreshButton.disabled = !authorized || !catalogReady || !selectedPersona || activeAgentState?.suggestionBusy === true;
+    minimalPersonaButton.disabled = !authorized || !catalogReady || !profileCatalogReady || activeAgentState?.suggestionBusy === true;
+    minimalRefreshButton.disabled = !authorized || !catalogReady || !profileCatalogReady || !selectedPersona || activeAgentState?.suggestionBusy === true;
     minimalPersonaLabel.textContent = selectedPersona ? `人设 · ${selectedPersona.label}` : '人设 · 等待服务';
     setMinimalStatus(!authorized
       ? '等待授权'
@@ -1081,7 +1372,9 @@
         || (personaCatalogStatus === 'error' || personaCatalogStatus === 'unavailable'
           ? personaCatalogFeedback
           : !authorized ? '请先在“接入与会话”完成授权并读取当前会话。'
-            : personaCatalogStatus === 'loading' ? '正在读取服务端人设目录…'
+            : executionProfileCatalogStatus === 'error' ? '服务器 AI 档位目录不可用。'
+              : executionProfileCatalogStatus === 'loading' ? '正在读取服务器 AI 档位目录…'
+                : personaCatalogStatus === 'loading' ? '正在读取服务端人设目录…'
               : activeAgentState?.suggestionBusy ? '正在向服务端请求三条建议…'
                 : batch ? '当前人设尚无建议；请生成一批新的服务端建议。'
                   : '当前会话暂无服务端建议。');
@@ -1099,8 +1392,12 @@
   function renderConsultation(state) {
     const authorized = Boolean(webToken && currentConversation && state);
     const busy = state?.consultationBusy === true || state?.historyLoading === true;
+    const profileReady = executionProfileCatalogStatus === 'ready' && executionProfileCatalog.length > 0;
+    consultationProfileSelect.disabled = !authorized || !profileReady || busy || state?.consultationBlocked === true;
     consultationQuestion.disabled = !authorized || busy || state?.consultationBlocked === true;
-    consultationSubmit.disabled = !authorized || busy || state?.consultationBlocked === true;
+    consultationSubmit.disabled = !authorized || !profileReady || busy || state?.consultationBlocked === true;
+    cancelConsultationButton.hidden = state?.consultationBusy !== true;
+    cancelConsultationButton.disabled = state?.consultationBusy !== true;
     consultationQuestion.placeholder = authorized
       ? '输入希望咨询的问题；回答由正式 AI 服务返回'
       : '请先授权并读取当前会话';
@@ -1110,6 +1407,13 @@
       consultationNotice.textContent = '请先在“接入与会话”完成授权读取。';
       consultationNotice.dataset.state = 'idle';
       renderConsultationTurns(null);
+      return;
+    }
+    if (!profileReady) {
+      setPill(consultationStatus, 'AI 档位不可用', 'error');
+      consultationNotice.textContent = '服务器执行档位目录尚未就绪；暂不能提交咨询。';
+      consultationNotice.dataset.state = 'error';
+      renderConsultationTurns(state);
       return;
     }
     if (state.historyLoading) setPill(consultationStatus, '恢复历史', 'pending');
@@ -1176,11 +1480,77 @@
     renderAgentState();
   }
 
-  function isValidSuggestionBatch(batch, state, personaPresetId) {
+  function renderExecutionProfileSelectors() {
+    const replySelection = replyProfileSelect.value;
+    const consultationSelection = consultationProfileSelect.value;
+    if (!executionProfileCatalog.length) {
+      const waitingLabel = !webToken ? '等待 Web 授权'
+        : executionProfileCatalogStatus === 'loading' ? '正在读取档位目录…'
+          : '档位目录不可用';
+      [replyProfileSelect, consultationProfileSelect].forEach((select) => {
+        select.replaceChildren(new Option(waitingLabel, ''));
+        select.value = '';
+        select.disabled = true;
+      });
+      $('replyProfileHelp').textContent = executionProfileCatalogStatus === 'error'
+        ? '服务器档位目录不可用；建议生成与咨询已禁用。'
+        : '档位由服务器控制上下文和历史检索范围。';
+      return;
+    }
+    const makeOptions = () => executionProfileCatalog.map((profile) => {
+      const option = new Option(`${profile.label} · ${profile.recentMessageLimit} 条`, profile.executionProfileId);
+      option.title = `${profile.description} ${profile.runtimeNote}`;
+      return option;
+    });
+    [replyProfileSelect, consultationProfileSelect].forEach((select) => {
+      const previous = select === replyProfileSelect ? replySelection : consultationSelection;
+      select.replaceChildren(...makeOptions());
+      const fallback = select === replyProfileSelect ? 'Quick' : 'Balanced';
+      select.value = executionProfileCatalog.some((profile) => profile.executionProfileId === previous)
+        ? previous : executionProfileCatalog.some((profile) => profile.executionProfileId === fallback) ? fallback : '';
+      select.disabled = !webToken || executionProfileCatalogStatus !== 'ready' || executionProfileCatalog.length === 0;
+    });
+    const selected = executionProfileCatalog.find((profile) => profile.executionProfileId === replyProfileSelect.value);
+    $('replyProfileHelp').textContent = selected
+      ? `${selected.description} ${selected.runtimeNote}`
+      : executionProfileCatalogStatus === 'loading' ? '正在读取服务端档位目录…' : '服务器档位目录不可用；生成操作已禁用。';
+  }
+
+  async function loadExecutionProfileCatalog(force = false) {
+    if (!webToken) return;
+    if (executionProfileCatalogStatus === 'loading') return;
+    if (executionProfileCatalogStatus === 'ready' && !force) return;
+    if (executionProfileController) executionProfileController.abort();
+    const controller = new AbortController();
+    executionProfileController = controller;
+    const tokenAtStart = webToken;
+    executionProfileCatalogStatus = 'loading';
+    renderExecutionProfileSelectors();
+    const result = await apiRequest('/api/ai/execution-profiles', { signal: controller.signal });
+    if (result.aborted || tokenAtStart !== webToken) return;
+    if (executionProfileController === controller) executionProfileController = null;
+    if (isUnauthorized(result)) {
+      handleUnauthorized();
+      return;
+    }
+    const received = Array.isArray(result.data?.profiles) ? result.data.profiles : [];
+    const supported = new Set(['Quick', 'Balanced', 'Deep', 'Max']);
+    executionProfileCatalog = result.ok ? received.filter((item) => item
+      && supported.has(item.executionProfileId)
+      && typeof item.label === 'string'
+      && typeof item.description === 'string'
+      && Number.isInteger(item.recentMessageLimit)) : [];
+    executionProfileCatalogStatus = executionProfileCatalog.length ? 'ready' : 'error';
+    renderExecutionProfileSelectors();
+    renderAgentState();
+  }
+
+  function isValidSuggestionBatch(batch, state, personaPresetId, executionProfileId) {
     if (!batch || !isSameScope(batch, currentConversation)
       || normalizeStatus(batch.taskType) !== 'replycandidates'
       || normalizeStatus(batch.status) !== 'completed'
       || batch.personaPresetId !== personaPresetId
+      || batch.executionProfileId !== executionProfileId
       || !isValidAgentGuid(batch.runId)
       || !isValidAgentGuid(batch.batchId)
       || !Array.isArray(batch.suggestions) || batch.suggestions.length !== 3) return false;
@@ -1193,26 +1563,29 @@
     }) && state.scopeKey === activeAgentScopeKey;
   }
 
-  function isValidAgentRun(run, runId, expectedTask, state) {
+  function isValidAgentRun(run, runId, expectedTask, state, expectedProfileId = null) {
     return run && isValidAgentGuid(run.runId) && run.runId.toLowerCase() === runId.toLowerCase()
       && normalizeStatus(run.taskType) === normalizeStatus(expectedTask)
       && normalizeStatus(run.status) === 'completed'
+      && (!expectedProfileId || run.executionProfileId === expectedProfileId)
       && typeof run.runtimeName === 'string' && run.runtimeName.trim().length > 0
       && state && String(run.accountId || '').toLowerCase() === String(currentConversation?.accountId || '').toLowerCase()
       && String(run.conversationId || '').toLowerCase() === String(currentConversation?.conversationId || '').toLowerCase()
       && state.scopeKey === activeAgentScopeKey;
   }
 
-  async function fetchAgentRun(runId, expectedTask, state, signal) {
+  async function fetchAgentRun(runId, expectedTask, state, signal, expectedProfileId = null) {
     const result = await apiRequest(`/api/ai/runs/${encodeURIComponent(runId)}`, { signal });
     if (!result.ok) return { result, run: null };
-    return { result, run: isValidAgentRun(result.data, runId, expectedTask, state) ? result.data : null };
+    return { result, run: isValidAgentRun(result.data, runId, expectedTask, state, expectedProfileId) ? result.data : null };
   }
 
   async function createSuggestionBatch() {
     const state = activeAgentState;
     const personaPresetId = state?.selectedPersonaPresetId;
+    const executionProfileId = document.body.classList.contains('is-minimal') ? 'Quick' : (replyProfileSelect.value || 'Quick');
     if (!state || !webToken || !currentConversation || personaCatalogStatus !== 'ready'
+      || executionProfileCatalogStatus !== 'ready'
       || !personaCatalog.some((item) => item.personaPresetId === personaPresetId) || state.suggestionBusy) return;
     if (suggestionController) suggestionController.abort();
     const controller = new AbortController();
@@ -1220,12 +1593,13 @@
     const tokenAtStart = webToken;
     const scopeAtStart = activeAgentScopeKey;
     const previousBatchId = state.suggestionBatch?.personaPresetId === personaPresetId
+      && state.suggestionBatch?.executionProfileId === executionProfileId
       ? toCanonicalAgentGuid(state.suggestionBatch.batchId) : null;
     state.suggestionBusy = true;
     state.suggestionError = '';
     state.suggestionFeedback = '';
     renderAgentState();
-    const body = { personaPresetId };
+    const body = { personaPresetId, executionProfileId };
     if (previousBatchId) body.previousBatchId = previousBatchId;
     const result = await apiRequest('/api/ai/suggestions', { method: 'POST', body, signal: controller.signal });
     if (result.aborted || tokenAtStart !== webToken || scopeAtStart !== activeAgentScopeKey || state !== activeAgentState) return;
@@ -1240,14 +1614,14 @@
       renderAgentState();
       return;
     }
-    if (!isValidSuggestionBatch(result.data, state, personaPresetId)) {
+    if (!isValidSuggestionBatch(result.data, state, personaPresetId, executionProfileId)) {
       if (suggestionController === controller) suggestionController = null;
       state.suggestionBusy = false;
       state.suggestionError = '建议响应未通过范围、人设、状态或三条内容校验；未展示该结果。';
       renderAgentState();
       return;
     }
-    const audit = await fetchAgentRun(result.data.runId, 'ReplyCandidates', state, controller.signal);
+    const audit = await fetchAgentRun(result.data.runId, 'ReplyCandidates', state, controller.signal, executionProfileId);
     if (audit.result.aborted || tokenAtStart !== webToken || scopeAtStart !== activeAgentScopeKey || state !== activeAgentState) return;
     if (isUnauthorized(audit.result)) {
       handleUnauthorized();
@@ -1270,6 +1644,16 @@
     state.suggestionIsDemoRuntime = /fake/i.test(audit.run.runtimeName);
     state.suggestionError = '';
     state.suggestionFeedback = '';
+    renderAgentState();
+  }
+
+  function cancelSuggestionGeneration() {
+    if (!suggestionController || !activeAgentState?.suggestionBusy) return;
+    const controller = suggestionController;
+    suggestionController = null;
+    activeAgentState.suggestionBusy = false;
+    activeAgentState.suggestionError = '已发出取消请求；如果服务端已经完成，运行记录仍会保留。';
+    controller.abort();
     renderAgentState();
   }
 
@@ -1394,6 +1778,7 @@
     state.turns = completedTurns.map((turn, index) => ({
       ...turn,
       runtimeName: audits[index].run.runtimeName,
+      executionProfileId: audits[index].run.executionProfileId,
       isDemoRuntime: /fake/i.test(audits[index].run.runtimeName)
     }));
     state.historyLoaded = true;
@@ -1436,7 +1821,9 @@
     event.preventDefault();
     const state = activeAgentState;
     const userInput = consultationQuestion.value.trim();
-    if (!state || !webToken || !currentConversation || !userInput || state.consultationBusy || state.historyLoading || state.consultationBlocked) return;
+    if (!state || !webToken || !currentConversation || !userInput
+      || executionProfileCatalogStatus !== 'ready'
+      || state.consultationBusy || state.historyLoading || state.consultationBlocked) return;
     if (userInput.length > 4000) {
       state.consultationError = '问题最多 4,000 个字符。';
       renderAgentState();
@@ -1447,6 +1834,7 @@
     consultationController = controller;
     const tokenAtStart = webToken;
     const scopeAtStart = activeAgentScopeKey;
+    const executionProfileId = consultationProfileSelect.value || 'Balanced';
     state.consultationBusy = true;
     state.consultationError = '';
     renderAgentState();
@@ -1478,7 +1866,7 @@
     const threadId = state.threadId;
     const result = await apiRequest(`/api/ai/consultations/${encodeURIComponent(threadId)}/turns`, {
       method: 'POST',
-      body: { userInput },
+      body: { userInput, executionProfileId },
       signal: controller.signal
     });
     if (result.aborted || tokenAtStart !== webToken || scopeAtStart !== activeAgentScopeKey || state !== activeAgentState) return;
@@ -1502,7 +1890,7 @@
       renderAgentState();
       return;
     }
-    const audit = await fetchAgentRun(result.data.runId, 'FreeConsultation', state, controller.signal);
+    const audit = await fetchAgentRun(result.data.runId, 'FreeConsultation', state, controller.signal, executionProfileId);
     if (audit.result.aborted || tokenAtStart !== webToken || scopeAtStart !== activeAgentScopeKey || state !== activeAgentState) return;
     if (isUnauthorized(audit.result)) {
       handleUnauthorized();
@@ -1522,6 +1910,7 @@
     state.consultationBusy = false;
     state.turns.push({
       ...result.data,
+      executionProfileId,
       runtimeName: audit.run.runtimeName,
       isDemoRuntime: /fake/i.test(audit.run.runtimeName)
     });
@@ -1529,6 +1918,16 @@
     state.historyError = '';
     state.consultationError = '';
     consultationQuestion.value = '';
+    renderAgentState();
+  }
+
+  function cancelConsultationTurn() {
+    if (!consultationController || !activeAgentState?.consultationBusy) return;
+    const controller = consultationController;
+    consultationController = null;
+    activeAgentState.consultationBusy = false;
+    activeAgentState.consultationError = '已发出取消请求；如果服务端已经完成，本轮记录仍会保留。';
+    controller.abort();
     renderAgentState();
   }
 
@@ -1552,8 +1951,347 @@
       && data.conversationId.length > 0;
   }
 
+  function populateSelect(select, placeholder, items, selectedId, getId, getLabel) {
+    if (!select) return;
+    const options = [new Option(placeholder, '')];
+    for (const item of items) {
+      const id = getId(item);
+      if (typeof id !== 'string' || !id) continue;
+      options.push(new Option(getLabel(item), id));
+    }
+    select.replaceChildren(...options);
+    select.value = selectedId || '';
+    select.disabled = !webToken || items.length === 0;
+  }
+
+  function renderDirectorySelectors() {
+    const accounts = [...directoryAccounts];
+    if (currentConversation && !accounts.some((item) => String(item.accountId).toLowerCase() === String(currentConversation.accountId).toLowerCase())) {
+      accounts.push({ accountId: currentConversation.accountId, displayName: '当前微信账号' });
+    }
+    const conversations = [...directoryConversations];
+    if (currentConversation && !conversations.some((item) => String(item.conversationId).toLowerCase() === String(currentConversation.conversationId).toLowerCase())) {
+      conversations.push(currentConversation);
+    }
+    const accountLabel = (item, index) => {
+      const name = typeof item.displayName === 'string' && item.displayName.trim()
+        ? item.displayName.trim()
+        : `微信账号 ${index + 1}`;
+      const state = String(item.availability || '').toLowerCase();
+      return `${name} · ${state === 'readeronline' ? 'Reader 在线' : state === 'offline' ? 'Reader 离线' : state === 'error' ? 'Reader 错误' : '仅有历史记录'}`;
+    };
+    const conversationLabel = (item, index) => typeof item.displayName === 'string' && item.displayName.trim()
+      ? item.displayName.trim()
+      : `未命名会话 ${index + 1}`;
+    [accountSelect, chatAccountSelect].forEach((select) => {
+      populateSelect(select, '选择微信账号', accounts, selectedAccountId, (item) => item.accountId,
+        (item) => accountLabel(item, accounts.indexOf(item)));
+    });
+    [conversationSelect, chatConversationSelect].forEach((select) => {
+      populateSelect(select, '选择联系人/会话', conversations, selectedConversationId,
+        (item) => item.conversationId, (item) => conversationLabel(item, conversations.indexOf(item)));
+    });
+    renderReaderTargetList();
+  }
+
+  function setDiscoveryStatus(message, state = 'idle') {
+    discoveryStatus.textContent = message;
+    discoveryStatus.dataset.state = state;
+  }
+
+  function setReaderTargetFeedback(message, state = 'idle') {
+    readerTargetStatus.textContent = message;
+    readerTargetStatus.dataset.state = state;
+  }
+
+  function renderReaderTargetList() {
+    if (!readerTargetList) return;
+    readerTargetList.replaceChildren();
+    if (!webToken || directoryConversations.length === 0) {
+      const empty = document.createElement('span');
+      empty.className = 'directory-empty';
+      empty.textContent = webToken ? '当前账号尚无已导入的 Direct 会话。' : '授权后读取已导入会话。';
+      readerTargetList.append(empty);
+      saveReaderTargetsButton.disabled = true;
+      discoverReaderSessionsButton.disabled = !webToken || !selectedAccountId;
+      readerTargetSearch.disabled = true;
+      return;
+    }
+
+    if (pendingReaderTargetIds === null || pendingReaderTargetAccountId !== selectedAccountId) {
+      pendingReaderTargetIds = new Set(directoryConversations.filter((item) => item.isMonitored === true)
+        .map((item) => item.conversationId));
+      pendingReaderTargetAccountId = selectedAccountId;
+    }
+    readerTargetSearch.disabled = false;
+    const search = readerTargetSearch.value.trim().toLocaleLowerCase();
+    const visibleConversations = directoryConversations.filter((item) => {
+      if (!search) return true;
+      return String(item.displayName || '').toLocaleLowerCase().includes(search);
+    });
+    visibleConversations.forEach((conversation, visibleIndex) => {
+      const index = directoryConversations.indexOf(conversation);
+      const label = document.createElement('label');
+      label.className = 'reader-target-option';
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.value = conversation.conversationId;
+      checkbox.checked = pendingReaderTargetIds.has(conversation.conversationId);
+      checkbox.setAttribute('aria-label', `${conversation.displayName || `未命名会话 ${index + 1}`} 后台监听`);
+      const copy = document.createElement('span');
+      copy.textContent = conversation.displayName || `未命名会话 ${index + 1}`;
+      const state = document.createElement('small');
+      const captureState = String(conversation.captureState || 'Unknown');
+      state.textContent = conversation.isMonitored ? `监听 · ${captureState}` : '未订阅';
+      copy.append(state);
+      label.append(checkbox, copy);
+      readerTargetList.append(label);
+      checkbox.addEventListener('change', () => {
+        if (checkbox.checked && pendingReaderTargetIds.size >= 20) {
+          checkbox.checked = false;
+          setReaderTargetFeedback('最多同时选择 20 个会话。', 'error');
+          return;
+        }
+        if (checkbox.checked) pendingReaderTargetIds.add(conversation.conversationId);
+        else pendingReaderTargetIds.delete(conversation.conversationId);
+        setReaderTargetFeedback(`已选择 ${pendingReaderTargetIds.size}/20 个后台监听会话。`);
+      });
+    });
+    if (visibleConversations.length === 0) {
+      const empty = document.createElement('span');
+      empty.className = 'directory-empty';
+      empty.textContent = '没有匹配的会话。';
+      readerTargetList.append(empty);
+    }
+
+    saveReaderTargetsButton.disabled = !webToken || !selectedAccountId;
+    discoverReaderSessionsButton.disabled = !webToken || !selectedAccountId;
+  }
+
+  async function loadAccountDirectory(current, signal = undefined) {
+    const accountResult = await apiRequest('/api/accounts', { signal });
+    if (accountResult.aborted || isUnauthorized(accountResult)) return accountResult;
+    if (!accountResult.ok || !Array.isArray(accountResult.data?.accounts)) {
+      directoryAccounts = [];
+      directoryConversations = [current];
+      renderDirectorySelectors();
+      return accountResult;
+    }
+
+    directoryAccounts = accountResult.data.accounts.filter((item) => item && isValidAgentGuid(item.accountId));
+    selectedAccountId = current.accountId;
+    selectedConversationId = current.conversationId;
+    if (!directoryAccounts.some((item) => String(item.accountId).toLowerCase() === String(current.accountId).toLowerCase())) {
+      directoryAccounts.push({ accountId: current.accountId, displayName: null, availability: 'Unknown' });
+    }
+    renderDirectorySelectors();
+
+    const conversationResult = await apiRequest(
+      `/api/accounts/${encodeURIComponent(current.accountId)}/conversations?limit=2000`, { signal });
+    if (conversationResult.aborted || isUnauthorized(conversationResult)) return conversationResult;
+    if (!conversationResult.ok || !Array.isArray(conversationResult.data?.conversations)) {
+      directoryConversations = [current];
+      renderDirectorySelectors();
+      return conversationResult;
+    }
+
+    directoryConversations = conversationResult.data.conversations.filter((item) =>
+      item && String(item.accountId).toLowerCase() === String(current.accountId).toLowerCase()
+      && isValidAgentGuid(item.conversationId));
+    readerTargetVersion = Number(directoryConversations[0]?.targetVersion || 0);
+    if (pendingReaderTargetAccountId !== current.accountId) {
+      pendingReaderTargetIds = null;
+      pendingReaderTargetAccountId = current.accountId;
+    }
+    if (!directoryConversations.some((item) => String(item.conversationId).toLowerCase() === String(current.conversationId).toLowerCase())) {
+      directoryConversations.push(current);
+    }
+    renderDirectorySelectors();
+    return { ok: true, status: 200, data: null };
+  }
+
+  async function selectAccount(accountId) {
+    if (!webToken || !isValidAgentGuid(accountId) || accountId === selectedAccountId) return;
+    selectedAccountId = accountId;
+    selectedConversationId = null;
+    directoryConversations = [];
+    pendingReaderTargetIds = null;
+    pendingReaderTargetAccountId = accountId;
+    readerTargetSearch.value = '';
+    renderDirectorySelectors();
+    clearCurrentConversationSelection('请选择此账号下的会话。');
+    const result = await apiRequest(`/api/accounts/${encodeURIComponent(accountId)}/conversations?limit=2000`);
+    if (isUnauthorized(result)) {
+      handleUnauthorized();
+      return;
+    }
+    if (!result.ok || !Array.isArray(result.data?.conversations)) {
+      const issue = formatRequestError(result);
+      setApiStatus(`读取会话目录失败：${issue.message}`, issue.state);
+      return;
+    }
+    directoryConversations = result.data.conversations.filter((item) => item
+      && String(item.accountId).toLowerCase() === String(accountId).toLowerCase()
+      && isValidAgentGuid(item.conversationId));
+    readerTargetVersion = Number(directoryConversations[0]?.targetVersion || 0);
+    pendingReaderTargetIds = null;
+    pendingReaderTargetAccountId = accountId;
+    renderDirectorySelectors();
+    setApiStatus(directoryConversations.length
+      ? '账号目录已读取，请选择要查看的会话。'
+      : '此账号目前没有已导入的 Direct 会话。', directoryConversations.length ? 'success' : 'idle');
+    setDiscoveryStatus('仅扫描本机活动 Reader 账号；扫描需由你主动发起。');
+  }
+
+  async function startReaderDiscovery() {
+    if (!webToken || !selectedAccountId || activeDiscoveryJobId) return;
+    discoverReaderSessionsButton.disabled = true;
+    setDiscoveryStatus('已请求 Reader 发现本机 Direct 会话，正在等待处理…', 'loading');
+    const accountId = selectedAccountId;
+    const result = await apiRequest(`/api/accounts/${encodeURIComponent(accountId)}/discovery-jobs`, { method: 'POST', body: {} });
+    if (isUnauthorized(result)) {
+      handleUnauthorized();
+      return;
+    }
+    if (!result.ok || !isValidAgentGuid(result.data?.jobId)) {
+      const issue = formatRequestError(result);
+      setDiscoveryStatus(`无法开始目录扫描：${issue.message}`, 'error');
+      discoverReaderSessionsButton.disabled = false;
+      return;
+    }
+    activeDiscoveryJobId = result.data.jobId;
+    await pollReaderDiscovery(accountId, activeDiscoveryJobId);
+  }
+
+  async function pollReaderDiscovery(accountId, jobId) {
+    if (!webToken || activeDiscoveryJobId !== jobId) return;
+    const result = await apiRequest(
+      `/api/accounts/${encodeURIComponent(accountId)}/discovery-jobs/${encodeURIComponent(jobId)}`);
+    if (isUnauthorized(result)) {
+      handleUnauthorized();
+      return;
+    }
+    if (!result.ok) {
+      const issue = formatRequestError(result);
+      activeDiscoveryJobId = null;
+      setDiscoveryStatus(`目录扫描状态不可用：${issue.message}`, 'error');
+      discoverReaderSessionsButton.disabled = false;
+      return;
+    }
+    const status = String(result.data?.status || '').toLowerCase();
+    if (status === 'pending') {
+      setDiscoveryStatus('请求已进入队列；Reader 离线时请先启动本机读取器。', 'loading');
+    } else if (status === 'running') {
+      setDiscoveryStatus('Reader 正在读取会话目录元数据；没有读取或上传聊天正文。', 'loading');
+    } else if (status === 'completed') {
+      activeDiscoveryJobId = null;
+      setDiscoveryStatus(`目录扫描完成，登记 ${Number(result.data.discoveredConversationCount) || 0} 个 Direct 会话。`, 'success');
+      if (selectedAccountId === accountId) {
+        const conversationsResult = await apiRequest(`/api/accounts/${encodeURIComponent(accountId)}/conversations?limit=2000`);
+        if (conversationsResult.ok && Array.isArray(conversationsResult.data?.conversations)) {
+          directoryConversations = conversationsResult.data.conversations.filter((item) => item
+            && String(item.accountId).toLowerCase() === String(accountId).toLowerCase()
+            && isValidAgentGuid(item.conversationId));
+          readerTargetVersion = Number(directoryConversations[0]?.targetVersion || 0);
+          renderDirectorySelectors();
+        }
+      }
+      discoverReaderSessionsButton.disabled = false;
+      return;
+    } else if (status === 'failed') {
+      activeDiscoveryJobId = null;
+      setDiscoveryStatus(`目录扫描失败（${result.data.errorCode || 'READER_DISCOVERY_FAILED'}）。`, 'error');
+      discoverReaderSessionsButton.disabled = false;
+      return;
+    } else {
+      activeDiscoveryJobId = null;
+      setDiscoveryStatus('目录扫描返回了未知状态。', 'error');
+      discoverReaderSessionsButton.disabled = false;
+      return;
+    }
+    discoveryPollTimer = window.setTimeout(() => {
+      discoveryPollTimer = null;
+      void pollReaderDiscovery(accountId, jobId);
+    }, 2000);
+  }
+
+  async function saveReaderTargets() {
+    if (!webToken || !selectedAccountId) return;
+    const conversationIds = [...(pendingReaderTargetIds || [])];
+    if (conversationIds.length > 20) {
+      setReaderTargetFeedback('最多同时监听 20 个会话。', 'error');
+      return;
+    }
+    saveReaderTargetsButton.disabled = true;
+    setReaderTargetFeedback('正在保存监听目标…', 'loading');
+    const accountId = selectedAccountId;
+    const result = await apiRequest(`/api/accounts/${encodeURIComponent(accountId)}/reader-targets`, {
+      method: 'PUT',
+      body: { expectedVersion: readerTargetVersion, conversationIds }
+    });
+    if (isUnauthorized(result)) {
+      handleUnauthorized();
+      return;
+    }
+    if (!result.ok) {
+      const issue = formatRequestError(result);
+      setReaderTargetFeedback(issue.message, 'error');
+      saveReaderTargetsButton.disabled = false;
+      return;
+    }
+    readerTargetVersion = Number(result.data.targetVersion);
+    pendingReaderTargetIds = new Set(conversationIds);
+    pendingReaderTargetAccountId = accountId;
+    const selected = new Set(conversationIds);
+    directoryConversations = directoryConversations.map((conversation) => ({
+      ...conversation,
+      targetVersion: readerTargetVersion,
+      isMonitored: selected.has(conversation.conversationId),
+      captureState: selected.has(conversation.conversationId) ? 'Unknown' : 'NotMonitored'
+    }));
+    renderDirectorySelectors();
+    setReaderTargetFeedback('监听集合已保存；Reader 将在下一次同步时应用。', 'success');
+  }
+
+  function clearCurrentConversationSelection(message) {
+    requestVersion++;
+    if (activeController) activeController.abort();
+    activeController = null;
+    if (olderPageController) olderPageController.abort();
+    olderPageController = null;
+    olderPageInProgress = false;
+    stopRevisionPolling();
+    clearActiveAgentScope();
+    currentConversation = null;
+    currentMessageSnapshot = null;
+    lastMessageSetRevision = null;
+    currentSessionValue.textContent = message;
+    chatSessionValue.textContent = message;
+    chatSessionType.textContent = '当前账号下的会话';
+    captureStateValue.textContent = '实时状态未知';
+    memoryCurrentSession.textContent = message;
+    minimalCurrentSession.textContent = message;
+    setPill(currentSessionStatus, '请选择会话', 'pending');
+    setPill(chatCaptureStatus, '状态未知', 'muted');
+    setPill(messageStatusPill, '请选择会话', 'muted');
+    setMessageState('请选择会话', '选择一个已导入的一对一会话后，聊天记录和 AI 功能才会加载。');
+    setIdentityUnavailable('请选择会话', '身份方向只会在选定会话并读取其服务器数据后显示。');
+    setMemoryUnavailable('请选择会话', '选择会话后读取对应的人工记忆。', 'idle');
+    renderDirectorySelectors();
+  }
+
+  async function selectConversation(conversationId) {
+    if (!webToken || !isValidAgentGuid(conversationId) || conversationId === selectedConversationId) return;
+    selectedConversationId = conversationId;
+    renderDirectorySelectors();
+    setWorkspacePage('chat');
+    await loadWorkspace('已切换会话；聊天、记忆和 AI 上下文已按所选会话重新读取。');
+  }
+
   function updateCurrentConversation(conversation) {
     currentConversation = conversation;
+    selectedAccountId = conversation.accountId;
+    selectedConversationId = conversation.conversationId;
     const name = typeof conversation.displayName === 'string' && conversation.displayName.trim()
       ? conversation.displayName.trim()
       : '已读取当前会话';
@@ -1561,25 +2299,35 @@
     const sessionLabel = type ? `${name} · ${type}` : name;
     currentSessionValue.textContent = sessionLabel;
     chatSessionValue.textContent = name;
-    chatSessionType.textContent = type ? `${type} · 服务器授权会话` : '服务器授权会话';
-    conversationOption.textContent = sessionLabel;
-    chatConversationOption.textContent = sessionLabel;
+    chatSessionType.textContent = type ? `${type} · 当前查看会话` : '当前查看会话';
+    renderDirectorySelectors();
     memoryCurrentSession.textContent = sessionLabel;
     minimalCurrentSession.textContent = sessionLabel;
     const captureStateRaw = String(conversation.captureState || '').trim();
-    captureStateValue.textContent = captureStateRaw
-      ? `${captureStateRaw}${captureStateRaw.toLowerCase() === 'inactive' ? ' · 未实时采集' : captureStateRaw.toLowerCase() === 'active' || captureStateRaw.toLowerCase() === 'capturing' ? ' · 实时采集中' : ''}`
-      : '服务器未提供采集状态';
     const captureState = captureStateRaw.toLowerCase();
-    if (captureState === 'active' || captureState === 'capturing') {
-      setPill(currentSessionStatus, '实时采集中', 'ok');
-      setPill(chatCaptureStatus, '实时采集中', 'ok');
-    } else if (captureState === 'inactive') {
-      setPill(currentSessionStatus, '未实时采集', 'pending');
-      setPill(chatCaptureStatus, '未实时采集', 'pending');
+    const captureLabels = {
+      listening: '实时监听中',
+      starting: 'Reader 启动中',
+      idle: 'Reader 在线 · 暂无目标',
+      notmonitored: '未订阅监听',
+      offline: 'Reader 离线',
+      error: 'Reader 错误',
+      unknown: '实时状态未知'
+    };
+    const captureLabel = captureLabels[captureState] || '实时状态未知';
+    captureStateValue.textContent = captureLabel;
+    if (captureState === 'listening') {
+      setPill(currentSessionStatus, captureLabel, 'ok');
+      setPill(chatCaptureStatus, captureLabel, 'ok');
+    } else if (captureState === 'notmonitored' || captureState === 'idle') {
+      setPill(currentSessionStatus, captureLabel, 'pending');
+      setPill(chatCaptureStatus, captureLabel, 'pending');
+    } else if (captureState === 'error' || captureState === 'offline') {
+      setPill(currentSessionStatus, captureLabel, 'error');
+      setPill(chatCaptureStatus, captureLabel, 'error');
     } else {
-      setPill(currentSessionStatus, '采集状态未知', 'muted');
-      setPill(chatCaptureStatus, '采集状态未知', 'muted');
+      setPill(currentSessionStatus, captureLabel, 'muted');
+      setPill(chatCaptureStatus, captureLabel, 'muted');
     }
     activateAgentScope(conversation);
   }
@@ -1597,11 +2345,10 @@
     currentSessionValue.textContent = issue.title;
     chatSessionValue.textContent = issue.title;
     chatSessionType.textContent = '会话不可用';
-    chatConversationOption.textContent = '当前会话不可用';
     captureStateValue.textContent = '当前会话不可用';
     memoryCurrentSession.textContent = '当前会话不可用';
     minimalCurrentSession.textContent = '当前会话不可用';
-    conversationOption.textContent = '当前会话不可用';
+    renderDirectorySelectors();
     setPill(currentSessionStatus, issue.code === 'CURRENT_CONVERSATION_NOT_FOUND' ? '未找到' : '不可用', 'error');
     setPill(chatCaptureStatus, issue.code === 'CURRENT_CONVERSATION_NOT_FOUND' ? '未找到' : '不可用', 'error');
     updateMessageError(issue);
@@ -1663,12 +2410,24 @@
     const list = document.createElement('div');
     list.className = 'message-list';
     snapshot.messages.forEach((message) => {
+      list.append(createMessageRow(message, directionsMatchCurrent));
+    });
+
+    const status = createMessageStatus(snapshot, directionsMatchCurrent);
+    const olderButton = createLoadOlderButton(snapshot.hasMoreMessages);
+    messageArea.replaceChildren(...[olderButton, list, status].filter(Boolean));
+    messageArea.scrollTop = messageArea.scrollHeight;
+    return directionsMatchCurrent ? true : 'version-mismatch';
+  }
+
+  function createMessageRow(message, directionsMatchCurrent) {
       const rawDirection = String(message.direction || 'Unknown').toLowerCase();
       const direction = directionsMatchCurrent ? rawDirection : 'unknown';
       const outgoing = direction === 'outgoing';
       const incoming = direction === 'incoming';
       const row = document.createElement('article');
       row.className = `message-row ${outgoing ? 'is-outgoing' : incoming ? 'is-incoming' : 'is-unknown'}`;
+      row.dataset.messageId = String(message.messageId || '').toLowerCase();
 
       const avatar = document.createElement('span');
       avatar.className = 'message-avatar';
@@ -1704,9 +2463,10 @@
       content.append(evidence);
 
       row.append(avatar, content);
-      list.append(row);
-    });
+      return row;
+  }
 
+  function createMessageStatus(snapshot, directionsMatchCurrent) {
     const status = document.createElement('div');
     status.className = 'message-status';
     const coverage = String(snapshot.historyCoverage || 'Unknown');
@@ -1715,13 +2475,126 @@
       : coverage.toLowerCase() === 'partial'
         ? '完整性状态：Partial'
         : '历史覆盖状态：Unknown';
-    const olderText = snapshot.hasMoreMessages ? ' · 存在更早消息，历史翻页控件尚未接入' : '';
     const versionText = directionsMatchCurrent
       ? `校准版本 ${snapshot.calibrationVersion}`
       : '身份版本不一致，方向已隐藏';
-    status.textContent = `显示 ${snapshot.messages.length} 条 · ${coverageText} · ${versionText}${olderText}`;
-    messageArea.replaceChildren(list, status);
-    return directionsMatchCurrent ? true : 'version-mismatch';
+    status.textContent = `已加载 ${snapshot.messages.length} 条 · ${coverageText} · ${versionText}`;
+    return status;
+  }
+
+  function createLoadOlderButton(hasMoreMessages) {
+    if (!hasMoreMessages) return null;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'load-older-messages';
+    button.dataset.loadOlderMessages = 'true';
+    button.textContent = '加载更早消息';
+    button.setAttribute('aria-label', '加载更早的聊天消息');
+    return button;
+  }
+
+  async function loadOlderMessages(button) {
+    if (olderPageInProgress || !webToken || !currentConversation || !currentMessageSnapshot) return;
+    const existingMessages = currentMessageSnapshot.messages;
+    const oldestMessageId = existingMessages[0]?.messageId;
+    if (!isValidAgentGuid(oldestMessageId)) {
+      button.disabled = true;
+      button.textContent = '无法确定翻页位置';
+      return;
+    }
+
+    olderPageInProgress = true;
+    const scopeAtStart = {
+      accountId: currentConversation.accountId,
+      conversationId: currentConversation.conversationId
+    };
+    const versionAtStart = requestVersion;
+    const controller = new AbortController();
+    olderPageController = controller;
+    const oldHeight = messageArea.scrollHeight;
+    const oldTop = messageArea.scrollTop;
+    button.disabled = true;
+    button.textContent = '正在加载…';
+
+    try {
+      const result = await apiRequest(
+        `/api/conversations/current/messages?limit=50&anchorMessageId=${encodeURIComponent(oldestMessageId)}`,
+        { signal: controller.signal }
+      );
+      if (result.aborted || versionAtStart !== requestVersion) return;
+      if (isUnauthorized(result)) {
+        handleUnauthorized();
+        return;
+      }
+      if (!result.ok || !isSameScope(result.data, scopeAtStart) || !Array.isArray(result.data?.messages)) {
+        button.disabled = false;
+        button.textContent = '加载失败，点击重试';
+        return;
+      }
+
+      const page = result.data;
+      if (Number(page.calibrationVersion) !== Number(currentConversation.calibrationVersion)) {
+        await loadWorkspace('身份校准版本已变化，已重新读取聊天记录。');
+        return;
+      }
+
+      const existingIds = new Set(
+        [...messageArea.querySelectorAll('.message-row[data-message-id]')]
+          .map((row) => row.dataset.messageId)
+      );
+      const pageMessageIds = new Set();
+      const olderRows = page.messages
+        .filter((message) => {
+          const id = String(message.messageId || '').toLowerCase();
+          if (!isValidAgentGuid(id) || existingIds.has(id) || pageMessageIds.has(id)) return false;
+          pageMessageIds.add(id);
+          return true;
+        })
+        .map((message) => createMessageRow(message, true));
+      const list = messageArea.querySelector('.message-list');
+      if (!list) {
+        await loadWorkspace('聊天窗口状态已重置，已重新读取聊天记录。');
+        return;
+      }
+
+      const mergedMessageIds = new Set();
+      const mergedMessages = [];
+      [...page.messages, ...existingMessages].forEach((message) => {
+        const id = String(message.messageId || '').toLowerCase();
+        if (!isValidAgentGuid(id) || mergedMessageIds.has(id)) return;
+        mergedMessageIds.add(id);
+        mergedMessages.push(message);
+      });
+      const mergedSnapshot = {
+        ...currentMessageSnapshot,
+        ...page,
+        messages: mergedMessages,
+        hasMoreMessages: page.hasMoreMessages
+      };
+
+      if (olderRows.length) {
+        const fragment = document.createDocumentFragment();
+        olderRows.forEach((row) => fragment.append(row));
+        list.prepend(fragment);
+      }
+      currentMessageSnapshot = mergedSnapshot;
+      const status = messageArea.querySelector('.message-status');
+      if (status) status.replaceWith(createMessageStatus(mergedSnapshot, true));
+      const loadMoreButton = messageArea.querySelector('[data-load-older-messages]');
+      if (mergedSnapshot.hasMoreMessages) {
+        button.disabled = false;
+        button.textContent = '加载更早消息';
+      } else {
+        loadMoreButton?.remove();
+      }
+
+      const newHeight = messageArea.scrollHeight;
+      messageArea.scrollTop = oldTop + (newHeight - oldHeight);
+      setPill(messageStatusPill, `${mergedSnapshot.messages.length} 条消息`, 'ok');
+    } finally {
+      if (olderPageController === controller) olderPageController = null;
+      olderPageInProgress = false;
+    }
   }
 
   function getScopePair(scope) {
@@ -1735,10 +2608,7 @@
   }
 
   function visiblePreviewPair() {
-    if (!previewPair) return null;
-    return swappedPreview
-      ? { self: previewPair.contact, contact: previewPair.self }
-      : { self: previewPair.self, contact: previewPair.contact };
+    return previewPair;
   }
 
   function updateIdentityPreview() {
@@ -1746,43 +2616,39 @@
     selfIdentity.textContent = visible ? visible.self : '身份候选不可比较';
     contactIdentity.textContent = visible ? visible.contact : '身份候选不可比较';
     if (!activeScope || !visible) {
-      previewState.textContent = '没有唯一且可比较的候选；不能互换或确认。';
+      previewState.textContent = '没有唯一且可比较的候选；不能互转身份。';
+      confirmCurrentButton.hidden = true;
+      confirmCurrentButton.disabled = true;
       swapButton.disabled = true;
-      confirmButton.disabled = true;
       return;
     }
 
     const state = String(activeScope.perspectiveState || 'Unresolved').toLowerCase();
     const confirmed = state === 'confirmed';
     const actionablePerspective = state === 'confirmed' || state === 'pendingconfirmation';
-    previewState.textContent = swappedPreview
-      ? '已交换页面本地预览 · 尚未提交'
-      : confirmed
-        ? '当前显示服务端已确认映射'
-        : '当前显示服务端默认映射 · 待确认';
-    swapButton.disabled = !activeScope.canConfirm || !actionablePerspective || !webToken;
-
-    const selectedSelf = visible.self;
-    const alreadyConfirmedSameSelection = confirmed
-      && selectedSelf === activeScope.effectiveSelfRawSenderId;
-    const canConfirm = Boolean(
+    const canSwap = Boolean(
       webToken
       && currentConversation
       && activeScope.canConfirm
       && actionablePerspective
       && activeScope.identityNamespace
       && getScopePair(activeScope)
-      && !alreadyConfirmedSameSelection
     );
-    confirmButton.disabled = !canConfirm;
-    confirmButton.textContent = alreadyConfirmedSameSelection ? '身份已确认' : '确认预览身份';
-    confirmHelp.textContent = canConfirm
-      ? `确认后会提交本人候选 ${selectedSelf} 至此身份范围（${activeScope.identityNamespace}），并更新该会话方向。交换预览本身不会提交。`
-      : alreadyConfirmedSameSelection
-        ? '当前预览已是服务端确认的身份映射；如需变更，请先交换本地预览再明确提交。'
-        : !actionablePerspective
-          ? '方向状态未解析；为避免错误归属，已禁用互换和确认。'
-          : '当前范围不满足服务端确认条件。';
+    const canConfirmCurrent = canSwap && state === 'pendingconfirmation';
+    confirmCurrentButton.hidden = !canConfirmCurrent;
+    confirmCurrentButton.disabled = !canConfirmCurrent;
+    swapButton.disabled = !canSwap;
+    swapButton.textContent = confirmed ? '互换并保存' : '互换并确认';
+    previewState.textContent = confirmed
+      ? '当前身份映射已确认；操作会将本人和联系人互换。'
+      : state === 'pendingconfirmation'
+        ? '默认映射待确认。可确认当前方向，或互换两方后确认。'
+        : '方向状态未解析，不能互转身份。';
+    confirmHelp.textContent = canConfirmCurrent
+      ? `当前本人预览为 ${visible.self}。方向正确时点“确认当前方向”；只有预览反了才点“互换并确认”。`
+      : canSwap
+        ? `互换后本人候选将由 ${visible.self} 变为 ${visible.contact}，并由服务端重新计算当前身份范围下的消息方向与关联记忆。`
+      : '当前范围不满足安全确认条件，不能提交身份互转。';
   }
 
   function renderPerspective(response, conversation) {
@@ -1791,7 +2657,6 @@
       return false;
     }
     currentPerspectiveResponse = response;
-    swappedPreview = false;
 
     if (response.scopes.length === 0) {
       setIdentityUnavailable('身份未知', '此会话尚无可用的发送者身份范围；不会根据消息内容推断本人方向。');
@@ -1837,8 +2702,9 @@
       previewState.textContent = scope.canConfirm
         ? '服务端未返回一致的本人/联系人候选映射。'
         : '当前身份范围没有一对可比较的候选。';
+      confirmCurrentButton.hidden = true;
+      confirmCurrentButton.disabled = true;
       swapButton.disabled = true;
-      confirmButton.disabled = true;
       confirmHelp.textContent = '候选映射不完整或不符合比较条件，不能提交身份校准。';
       selfIdentity.textContent = '候选映射不可用';
       contactIdentity.textContent = '候选映射不可用';
@@ -1881,13 +2747,32 @@
       return;
     }
 
+    if (selectedAccountId && !selectedConversationId) {
+      clearCurrentConversationSelection('请选择此账号下的会话。');
+      return;
+    }
+
     clearRevisionPollTimer();
     if (!suppliedCurrentSnapshot && revisionPollController) revisionPollController.abort();
+    if (olderPageController) olderPageController.abort();
+    olderPageController = null;
+    olderPageInProgress = false;
     const version = ++requestVersion;
     if (activeController) activeController.abort();
     const controller = new AbortController();
     activeController = controller;
     setLoadingState();
+
+    const accountDirectoryResult = await apiRequest('/api/accounts', { signal: controller.signal });
+    if (version !== requestVersion || accountDirectoryResult.aborted) return;
+    if (isUnauthorized(accountDirectoryResult)) {
+      handleUnauthorized();
+      return;
+    }
+    if (accountDirectoryResult.ok && Array.isArray(accountDirectoryResult.data?.accounts)) {
+      directoryAccounts = accountDirectoryResult.data.accounts.filter((item) => item && isValidAgentGuid(item.accountId));
+      renderDirectorySelectors();
+    }
 
     const currentResult = suppliedCurrentSnapshot
       ? { ok: true, status: 200, data: suppliedCurrentSnapshot }
@@ -1917,6 +2802,12 @@
 
     const conversation = currentResult.data;
     updateCurrentConversation(conversation);
+    const directoryResult = await loadAccountDirectory(conversation, controller.signal);
+    if (version !== requestVersion || directoryResult.aborted) return;
+    if (isUnauthorized(directoryResult)) {
+      handleUnauthorized();
+      return;
+    }
     const currentRevision = typeof conversation.messageSetRevision === 'string'
       ? conversation.messageSetRevision
       : '';
@@ -1935,6 +2826,7 @@
     }
 
     const issues = [];
+    if (!directoryResult.ok) issues.push('账号/会话目录不可用');
     if (messagesResult.ok) {
       const messageResult = renderMessageRows(messagesResult.data, conversation);
       if (messageResult === 'version-mismatch') {
@@ -2040,21 +2932,22 @@
     return `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
   }
 
-  async function confirmIdentity() {
+  async function confirmIdentity(swap) {
     const visible = visiblePreviewPair();
     if (!webToken || !currentConversation || !activeScope || !visible || !activeScope.canConfirm) return;
     const state = String(activeScope.perspectiveState || '').toLowerCase();
     if (state !== 'confirmed' && state !== 'pendingconfirmation') return;
-    const selectedSelfRawSenderId = visible.self;
+    const selectedSelfRawSenderId = swap ? visible.contact : visible.self;
     const namespace = activeScope.identityNamespace;
     if (!namespace) return;
 
     const summary = [
-      `本人 raw sender ID：${selectedSelfRawSenderId}`,
+      `当前本人 raw sender ID：${visible.self}`,
+      `${swap ? '互换后' : '确认后'}本人 raw sender ID：${selectedSelfRawSenderId}`,
       `身份命名空间：${namespace}`,
       `校准版本：${activeScope.calibrationVersion}`,
       '',
-      '确认后会将此明确 ID 提交为本人，并由服务端更新该会话消息方向。是否继续？'
+      `${swap ? '确认后会互换本人和联系人，并由服务端更新该会话消息方向。' : '确认后会保留当前预览，并由服务端更新该会话消息方向。'}是否继续？`
     ].join('\n');
     if (!window.confirm(summary)) return;
 
@@ -2062,7 +2955,7 @@
     if (activeController) activeController.abort();
     const controller = new AbortController();
     activeController = controller;
-    confirmButton.disabled = true;
+    confirmCurrentButton.disabled = true;
     swapButton.disabled = true;
     setApiStatus('正在提交明确的身份校准选择…', 'loading');
     connectButton.disabled = true;
@@ -2099,13 +2992,13 @@
         return;
       }
       updateIdentityPreview();
-      confirmButton.disabled = true;
+      confirmCurrentButton.disabled = true;
+      swapButton.disabled = true;
       confirmHelp.textContent = `${issue.detail} 请先重新读取并检查当前身份范围。`;
       finishLoading();
       return;
     }
 
-    swappedPreview = false;
     setApiStatus('身份校准已提交；正在重新读取消息方向。', 'success');
     await loadWorkspace('身份校准已提交，当前会话与消息方向已重新读取。');
   }
@@ -2206,6 +3099,15 @@
     button.addEventListener('click', () => setMode(button.dataset.mode));
   });
 
+  [accountSelect, chatAccountSelect].forEach((select) => {
+    select.addEventListener('change', () => { void selectAccount(select.value); });
+  });
+  [conversationSelect, chatConversationSelect].forEach((select) => {
+    select.addEventListener('change', () => { void selectConversation(select.value); });
+  });
+  discoverReaderSessionsButton.addEventListener('click', () => { void startReaderDiscovery(); });
+  saveReaderTargetsButton.addEventListener('click', () => { void saveReaderTargets(); });
+
   personaSelect.addEventListener('change', () => {
     if (!activeAgentState) return;
     activeAgentState.selectedPersonaPresetId = personaSelect.value;
@@ -2213,8 +3115,14 @@
     activeAgentState.suggestionFeedback = '';
     renderAgentState();
   });
+  replyProfileSelect.addEventListener('change', () => {
+    if (!document.body.classList.contains('is-minimal')) workspaceReplyProfileId = replyProfileSelect.value || 'Quick';
+    renderAgentState();
+  });
+  consultationProfileSelect.addEventListener('change', () => { renderAgentState(); });
   reloadPersonasButton.addEventListener('click', () => { void loadPersonaCatalog(true); });
   generateSuggestionsButton.addEventListener('click', () => { void createSuggestionBatch(); });
+  cancelSuggestionButton.addEventListener('click', cancelSuggestionGeneration);
   minimalPersonaButton.addEventListener('click', () => {
     if (!activeAgentState || !personaCatalog.length) return;
     const index = personaCatalog.findIndex((item) => item.personaPresetId === activeAgentState.selectedPersonaPresetId);
@@ -2233,10 +3141,16 @@
     });
   });
   consultationForm.addEventListener('submit', submitConsultation);
+  cancelConsultationButton.addEventListener('click', cancelConsultationTurn);
+  messageArea.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-load-older-messages]');
+    if (button && !button.disabled) void loadOlderMessages(button);
+  });
 
   pageButtons.forEach((button) => {
     button.addEventListener('click', () => setWorkspacePage(button.dataset.page));
   });
+  readerTargetSearch.addEventListener('input', renderReaderTargetList);
   document.addEventListener('visibilitychange', () => {
     if (!isPageVisible()) pauseRevisionPolling();
     else scheduleRevisionPoll(0);
@@ -2249,12 +3163,8 @@
     minimalDetails.hidden = !expanded;
   });
 
-  swapButton.addEventListener('click', () => {
-    if (!previewPair || swapButton.disabled) return;
-    swappedPreview = !swappedPreview;
-    updateIdentityPreview();
-    announce('已交换页面本地预览；没有提交身份校准。');
-  });
+  confirmCurrentButton.addEventListener('click', () => { void confirmIdentity(false); });
+  swapButton.addEventListener('click', () => { void confirmIdentity(true); });
 
   webAuthForm.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -2295,6 +3205,7 @@
     }
   });
   reloadMemoriesButton.addEventListener('click', () => loadMemoryList());
+  refreshSystemStatusButton.addEventListener('click', () => { void loadSystemStatus(); });
 
   setWorkspacePage('chat');
 
@@ -2310,9 +3221,8 @@
     announce('本页面授权已清除。');
   });
 
+  confirmCurrentButton.disabled = true;
   swapButton.disabled = true;
-  confirmButton.disabled = true;
-  confirmButton.addEventListener('click', confirmIdentity);
   resetWorkspaceForNoToken();
 
   // UI mode and identity preview are local page state only. API data is loaded only

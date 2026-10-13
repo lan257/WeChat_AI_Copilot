@@ -51,6 +51,7 @@ public sealed class AgentTaskApplicationServiceV1(
         var task = new AgentTaskV1
         {
             TaskType = AgentTaskTypeV1.ReplyCandidates,
+            ExecutionProfileId = request.ExecutionProfileId,
             AccountId = scope.AccountId,
             ConversationId = scope.ConversationId,
             PersonaPresetId = request.PersonaPresetId,
@@ -121,7 +122,8 @@ public sealed class AgentTaskApplicationServiceV1(
         AuthorizedContextScopeV1 scope,
         Guid threadId,
         string userInput,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        AgentExecutionProfileIdV1 executionProfileId = AgentExecutionProfileIdV1.Balanced)
     {
         ArgumentNullException.ThrowIfNull(scope);
         if (string.IsNullOrWhiteSpace(userInput))
@@ -151,6 +153,7 @@ public sealed class AgentTaskApplicationServiceV1(
         var task = new AgentTaskV1
         {
             TaskType = AgentTaskTypeV1.FreeConsultation,
+            ExecutionProfileId = executionProfileId,
             AccountId = scope.AccountId,
             ConversationId = scope.ConversationId,
             ThreadId = thread.ThreadId,

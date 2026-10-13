@@ -76,6 +76,41 @@ public sealed class StructuredCodexCliExecutorV1Tests
     }
 
     [Fact]
+    public async Task ExecuteAsync_PassesServerConfiguredModelAsSeparateArgument()
+    {
+        var directory = CreateTemporaryDirectory();
+        var executablePath = CreateFakeExecutable(directory);
+        var runner = new FakeProcessRunner((request, _) =>
+        {
+            File.WriteAllText(GetFollowingArgument(request.Arguments, "--output-last-message"), "{\"status\":\"ok\"}");
+            return Task.FromResult(new CodexCliProcessResultV1(0, TimedOut: false, Cancelled: false));
+        });
+        try
+        {
+            var result = await new StructuredCodexCliExecutorV1(runner, executablePath)
+                .ExecuteAsync("synthetic", Schema, TimeSpan.FromSeconds(2), modelId: "fast-model-v1");
+
+            Assert.Equal(StructuredCodexCliExecutionStatusV1.Completed, result.Status);
+            Assert.Equal(1, CountArgumentPair(runner.LastRequest!.Arguments, "--model", "fast-model-v1"));
+        }
+        finally
+        {
+            DeleteTemporaryDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_RejectsUnsafeModelIdentifierBeforeStartingProcess()
+    {
+        var runner = new FakeProcessRunner((_, _) => throw new InvalidOperationException("must not start"));
+        var result = await new StructuredCodexCliExecutorV1(runner, "codex")
+            .ExecuteAsync("synthetic", Schema, TimeSpan.FromSeconds(2), modelId: "model --malicious");
+
+        Assert.Equal(StructuredCodexCliExecutionStatusV1.CliConfigurationInvalid, result.Status);
+        Assert.Null(runner.LastRequest);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_ForwardsOnlyExplicitNonEmptyProxyVariablesAndKeepsCaseVariants()
     {
         var directory = CreateTemporaryDirectory();

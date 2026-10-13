@@ -25,8 +25,9 @@ public sealed record StructuredCodexCliExecutionResultV1(
     JsonElement? Output);
 
 /// <summary>
-/// Fixed-policy structured Codex execution. Business modules provide only data,
-/// a JSON Schema, and a timeout; command lines and environments stay in Platform.
+/// Fixed-policy structured Codex execution. Business modules provide data, a
+/// JSON Schema, a timeout, and an optional server-configured model ID; command
+/// lines and environments stay in Platform.
 /// </summary>
 public interface IStructuredCodexCliExecutorV1
 {
@@ -34,5 +35,6 @@ public interface IStructuredCodexCliExecutorV1
         string prompt,
         string outputSchemaJson,
         TimeSpan timeout,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        string? modelId = null);
 }

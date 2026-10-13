@@ -90,6 +90,94 @@ public sealed class CodexCliAgentRuntimeTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_DeepProfileRetrievesBoundedHistoryBeforeSuggestionGeneration()
+    {
+        var hitId = Guid.NewGuid();
+        var session = new FakeContextToolSession(
+            [CreateToolContext()],
+            searchResult: new HistorySearchResultV1
+            {
+                Status = HistorySearchStatusV1.Complete,
+                MessageSetRevision = "message-set-r1",
+                Hits =
+                [
+                    new HistorySearchHitV1
+                    {
+                        Message = new ContextMessageV1
+                        {
+                            MessageId = hitId,
+                            Text = "authorized historical fact",
+                            MessageType = "Text",
+                            OccurredAt = DateTimeOffset.UtcNow.AddDays(-1),
+                            Direction = MessageDirectionV1.Incoming,
+                            DirectionEvidence = DirectionEvidenceV1.UserConfirmed
+                        }
+                    }
+                ]
+            });
+        var runner = new FakeProcessRunner("""{"suggestions":["one","two","three"]}""");
+        var (runtime, _, testDirectory) = CreateRuntime(runner);
+        try
+        {
+            var baseline = CreateReplyRequest();
+            var request = baseline with
+            {
+                Task = baseline.Task! with { ExecutionProfileId = AgentExecutionProfileIdV1.Deep },
+                ContextToolSession = session,
+                AllowedReadCapabilities = [AgentReadCapabilityV1.SearchChatHistory],
+                Budget = baseline.Budget! with { MaxToolCalls = 2 }
+            };
+
+            var result = await runtime.ExecuteAsync(request, CancellationToken.None);
+
+            Assert.Equal(AgentRunStatusV1.Completed, result.Status);
+            Assert.Contains("authorized historical fact", runner.LastRequest!.StandardInput);
+            Assert.Contains("searchHistory", runner.LastRequest.StandardInput);
+            Assert.Single(session.SearchRequests);
+            Assert.Equal("message-set-r1", session.LastSearchRequest!.ExpectedMessageSetRevision);
+            Assert.Equal("private chat message content", session.LastSearchRequest.Query);
+        }
+        finally
+        {
+            if (Directory.Exists(testDirectory)) Directory.Delete(testDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_MaxProfileRunsSeparateSuggestionReviewPass()
+    {
+        var session = new FakeContextToolSession([CreateToolContext()]);
+        var runner = new FakeProcessRunner(
+        [
+            """{"suggestions":["draft one","draft two","draft three"]}""",
+            """{"suggestions":["reviewed one","reviewed two","reviewed three"]}"""
+        ]);
+        var (runtime, _, testDirectory) = CreateRuntime(runner);
+        try
+        {
+            var baseline = CreateReplyRequest();
+            var request = baseline with
+            {
+                Task = baseline.Task! with { ExecutionProfileId = AgentExecutionProfileIdV1.Max },
+                ContextToolSession = session,
+                AllowedReadCapabilities = [AgentReadCapabilityV1.SearchChatHistory],
+                Budget = baseline.Budget! with { MaxToolCalls = 4 }
+            };
+
+            var result = await runtime.ExecuteAsync(request, CancellationToken.None);
+
+            Assert.Equal(AgentRunStatusV1.Completed, result.Status);
+            Assert.Equal(2, runner.Requests.Count);
+            Assert.Contains("Max 档独立复核", runner.Requests[1].StandardInput);
+            Assert.Equal(new[] { "reviewed one", "reviewed two", "reviewed three" }, result.Suggestions.Select(item => item.Text));
+        }
+        finally
+        {
+            if (Directory.Exists(testDirectory)) Directory.Delete(testDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task ExecuteAsync_IncludesSameThreadHistoryButNotThreadScopeIdsInPrompt()
     {
         var runner = new FakeProcessRunner(

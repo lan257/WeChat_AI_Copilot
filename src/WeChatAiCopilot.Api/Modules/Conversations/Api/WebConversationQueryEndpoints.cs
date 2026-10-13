@@ -27,17 +27,15 @@ public static class WebConversationQueryEndpoints
         IServiceProvider services,
         CancellationToken cancellationToken)
     {
-        if (!TryGetTarget(configuration, out var target))
-        {
-            return Error(context, StatusCodes.Status503ServiceUnavailable,
-                "WEB_SCOPE_NOT_CONFIGURED", "The authorized Web account and conversation are not configured.", retryable: false);
-        }
-
         var dataSource = services.GetService<NpgsqlDataSource>();
         if (dataSource is null)
         {
             return DatabaseNotConfigured(context);
         }
+
+        var resolution = await ResolveTargetAsync(context, configuration, dataSource, cancellationToken);
+        if (resolution.Error is not null) return resolution.Error;
+        var target = resolution.Target!;
 
         try
         {
@@ -59,12 +57,6 @@ public static class WebConversationQueryEndpoints
         IServiceProvider services,
         CancellationToken cancellationToken)
     {
-        if (!TryGetTarget(configuration, out var target))
-        {
-            return Error(context, StatusCodes.Status503ServiceUnavailable,
-                "WEB_SCOPE_NOT_CONFIGURED", "The authorized Web account and conversation are not configured.", retryable: false);
-        }
-
         if (!TryReadLimit(context, out var limit))
         {
             return Error(context, StatusCodes.Status400BadRequest,
@@ -82,6 +74,10 @@ public static class WebConversationQueryEndpoints
         {
             return DatabaseNotConfigured(context);
         }
+
+        var resolution = await ResolveTargetAsync(context, configuration, dataSource, cancellationToken);
+        if (resolution.Error is not null) return resolution.Error;
+        var target = resolution.Target!;
 
         var messageQuery = services.GetService<IMessageQueryV1>();
         if (messageQuery is null)
@@ -110,17 +106,15 @@ public static class WebConversationQueryEndpoints
         IServiceProvider services,
         CancellationToken cancellationToken)
     {
-        if (!TryGetTarget(configuration, out var target))
-        {
-            return Error(context, StatusCodes.Status503ServiceUnavailable,
-                "WEB_SCOPE_NOT_CONFIGURED", "The authorized Web account and conversation are not configured.", retryable: false);
-        }
-
         var dataSource = services.GetService<NpgsqlDataSource>();
         if (dataSource is null)
         {
             return DatabaseNotConfigured(context);
         }
+
+        var resolution = await ResolveTargetAsync(context, configuration, dataSource, cancellationToken);
+        if (resolution.Error is not null) return resolution.Error;
+        var target = resolution.Target!;
 
         try
         {
@@ -136,24 +130,6 @@ public static class WebConversationQueryEndpoints
         }
     }
 
-    private static bool TryGetTarget(IConfiguration configuration, out WebConversationTarget target)
-    {
-        var accountExternalId = configuration["Web:AllowedAccountExternalId"];
-        var conversationExternalId = configuration["Web:AllowedConversationExternalId"];
-        if (string.IsNullOrWhiteSpace(accountExternalId)
-            || string.IsNullOrWhiteSpace(conversationExternalId))
-        {
-            target = default!;
-            return false;
-        }
-
-        target = new WebConversationTarget(
-            configuration["Web:Provider"] ?? "local-wechat",
-            accountExternalId,
-            conversationExternalId);
-        return true;
-    }
-
     private static bool TryReadLimit(HttpContext context, out int limit)
     {
         limit = 30;
@@ -165,6 +141,23 @@ public static class WebConversationQueryEndpoints
         return values.Count == 1
             && int.TryParse(values[0], NumberStyles.None, CultureInfo.InvariantCulture, out limit)
             && limit > 0;
+    }
+
+    private static async Task<WebConversationTargetResolutionV1> ResolveTargetAsync(
+        HttpContext context,
+        IConfiguration configuration,
+        NpgsqlDataSource dataSource,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await WebConversationScopeResolverV1.ResolveAsync(
+                context, configuration, dataSource, cancellationToken);
+        }
+        catch (NpgsqlException)
+        {
+            return new WebConversationTargetResolutionV1(null, DatabaseUnavailable(context));
+        }
     }
 
     private static bool TryReadAnchorMessageId(HttpContext context, out Guid? anchorMessageId)

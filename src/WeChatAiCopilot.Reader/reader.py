@@ -19,6 +19,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -30,6 +31,8 @@ MIN_SOURCE_EPOCH = 946684800
 MAX_SOURCE_EPOCH = 4102444800
 MAX_HISTORY_ROWS = 5000
 MAX_BATCH_SIZE = 500
+MAX_MONITORED_TARGETS = 20
+MAX_DISCOVERY_SESSIONS = 2000
 MAX_API_RESPONSE_BYTES = 65536
 TEXT_LOCAL_TYPE = 1
 TABLE_NAME_RE = re.compile(r"^Msg_[0-9a-fA-F]{32}$")
@@ -139,16 +142,39 @@ def _load_settings() -> dict[str, Any]:
     conversation = parsed.get("conversationExternalId")
     if not isinstance(account, str) or not account.strip() or len(account) > 512:
         raise ReaderFailure("READER_ACCOUNT_REQUIRED")
-    if not isinstance(conversation, str) or not conversation.strip() or len(conversation) > 512:
-        raise ReaderFailure("READER_CONVERSATION_REQUIRED")
-    if any(ord(character) < 32 for character in account + conversation):
+    transport = _validate_transport(parsed.get("transport"))
+    configured_targets = parsed.get("conversationExternalIds")
+    if configured_targets is not None:
+        if (not isinstance(configured_targets, list)
+                or len(configured_targets) > MAX_MONITORED_TARGETS
+                or any(not isinstance(item, str) or not item.strip() or len(item) > 512 for item in configured_targets)):
+            raise ReaderFailure("READER_TARGETS_INVALID")
+        target_ids = [item.strip() for item in configured_targets]
+    else:
+        target_ids = []
+    if isinstance(conversation, str) and conversation.strip():
+        if len(conversation) > 512:
+            raise ReaderFailure("READER_SCOPE_INVALID")
+        legacy_id = conversation.strip()
+        if legacy_id not in target_ids:
+            target_ids.insert(0, legacy_id)
+    elif conversation is not None and not isinstance(conversation, str):
         raise ReaderFailure("READER_SCOPE_INVALID")
-    if conversation.endswith("@chatroom") or conversation.startswith("gh_") or conversation in EXCLUDED_DIRECT_IDS:
+    if len(target_ids) > MAX_MONITORED_TARGETS or len(set(target_ids)) != len(target_ids):
+        raise ReaderFailure("READER_TARGETS_INVALID")
+    if not target_ids and not transport["enabled"]:
+        raise ReaderFailure("READER_CONVERSATION_REQUIRED")
+    combined_scope = account + "".join(target_ids)
+    if any(ord(character) < 32 for character in combined_scope):
+        raise ReaderFailure("READER_SCOPE_INVALID")
+    if any(value.endswith("@chatroom") or value.startswith("gh_") or value in EXCLUDED_DIRECT_IDS
+           for value in target_ids):
         raise ReaderFailure("DIRECT_CONVERSATIONS_ONLY")
     return {
         "accountExternalId": account.strip(),
-        "conversationExternalId": conversation.strip(),
-        "transport": _validate_transport(parsed.get("transport")),
+        "conversationExternalId": target_ids[0] if target_ids else "",
+        "conversationExternalIds": target_ids,
+        "transport": transport,
     }
 
 
@@ -266,6 +292,24 @@ def _success_receipt_summary(
             "isLastBatch": is_last_batch,
         }
 
+    if contract_name == "ReaderStatusHeartbeatV1":
+        if receipt.get("accepted") is not True:
+            raise ReaderFailure("FORMAL_API_RECEIPT_INVALID", {"httpStatus": status})
+        return {"status": "accepted"}
+
+    if contract_name == "ReaderDirectorySubmissionV1":
+        discovered_count = receipt.get("discoveredConversationCount")
+        if (receipt.get("accepted") is not True
+                or not isinstance(discovered_count, int) or isinstance(discovered_count, bool)
+                or discovered_count != len(payload.get("sessions", []))):
+            raise ReaderFailure("FORMAL_API_RECEIPT_INVALID", {"httpStatus": status})
+        return {"status": "accepted", "discoveredConversationCount": discovered_count}
+
+    if contract_name == "ReaderDirectoryFailureV1":
+        if receipt.get("accepted") is not True:
+            raise ReaderFailure("FORMAL_API_RECEIPT_INVALID", {"httpStatus": status})
+        return {"status": "accepted"}
+
     raise ReaderFailure("READER_CONTRACT_UNSUPPORTED")
 
 
@@ -329,6 +373,147 @@ def _post_contract(settings: dict[str, Any], route: str, contract_name: str, pay
     raise ReaderFailure("FORMAL_API_UNAVAILABLE", {"attempts": 3})
 
 
+def _get_server_targets(settings: dict[str, Any]) -> dict[str, Any]:
+    transport = settings["transport"]
+    if not transport["enabled"]:
+        raise ReaderFailure("READER_TRANSPORT_DISABLED")
+    request = urllib.request.Request(
+        transport["apiBaseUrl"] + "/api/reader/targets",
+        method="GET",
+        headers={
+            "Authorization": "Bearer " + transport["readerBearerToken"],
+            "Accept": "application/json",
+        },
+    )
+    opener = urllib.request.build_opener(_NoRedirectHandler())
+    for attempt in range(3):
+        try:
+            with opener.open(request, timeout=5) as response:
+                body = response.read(MAX_API_RESPONSE_BYTES + 1)
+                status = int(response.status)
+        except urllib.error.HTTPError as exc:
+            body = exc.read(MAX_API_RESPONSE_BYTES + 1)
+            status = int(exc.code)
+            if (status in {408, 425, 429} or status >= 500) and attempt < 2:
+                time.sleep(0.5 * (2 ** attempt))
+                continue
+            details: dict[str, Any] = {"httpStatus": status}
+            remote_code = _remote_error_code(body)
+            if remote_code is not None:
+                details["remoteCode"] = remote_code
+            raise ReaderFailure("READER_TARGET_SYNC_REJECTED", details) from None
+        except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException):
+            if attempt < 2:
+                time.sleep(0.5 * (2 ** attempt))
+                continue
+            raise ReaderFailure("READER_TARGET_SYNC_UNAVAILABLE", {"attempts": 3}) from None
+
+        if len(body) > MAX_API_RESPONSE_BYTES:
+            raise ReaderFailure("FORMAL_API_RESPONSE_TOO_LARGE", {"httpStatus": status})
+        if not 200 <= status < 300:
+            raise ReaderFailure("READER_TARGET_SYNC_REJECTED", {"httpStatus": status})
+        try:
+            result = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise ReaderFailure("READER_TARGET_RESPONSE_INVALID") from None
+        if not isinstance(result, dict):
+            raise ReaderFailure("READER_TARGET_RESPONSE_INVALID")
+        account_external_id = result.get("accountExternalId")
+        version = result.get("targetVersion")
+        targets = result.get("conversationExternalIds")
+        if (account_external_id != settings["accountExternalId"]
+                or not isinstance(version, int) or isinstance(version, bool) or version < 0
+                or not isinstance(targets, list) or len(targets) > MAX_MONITORED_TARGETS
+                or any(not isinstance(value, str) or not value.strip() or len(value) > 512
+                       or any(ord(character) < 32 for character in value)
+                       or value.endswith("@chatroom") or value.startswith("gh_") or value in EXCLUDED_DIRECT_IDS
+                       for value in targets)
+                or len(set(targets)) != len(targets)):
+            raise ReaderFailure("READER_TARGET_RESPONSE_INVALID")
+        return {"targetVersion": version, "conversationExternalIds": list(targets)}
+
+    raise ReaderFailure("READER_TARGET_SYNC_UNAVAILABLE", {"attempts": 3})
+
+
+def _get_next_discovery_job(settings: dict[str, Any]) -> dict[str, str] | None:
+    transport = settings["transport"]
+    if not transport["enabled"]:
+        return None
+    request = urllib.request.Request(
+        transport["apiBaseUrl"] + "/api/reader/discovery-jobs/next",
+        method="GET",
+        headers={
+            "Authorization": "Bearer " + transport["readerBearerToken"],
+            "Accept": "application/json",
+        },
+    )
+    opener = urllib.request.build_opener(_NoRedirectHandler())
+    try:
+        with opener.open(request, timeout=5) as response:
+            body = response.read(MAX_API_RESPONSE_BYTES + 1)
+            status = int(response.status)
+    except urllib.error.HTTPError as exc:
+        details: dict[str, Any] = {"httpStatus": int(exc.code)}
+        remote_code = _remote_error_code(exc.read(MAX_API_RESPONSE_BYTES + 1))
+        if remote_code is not None:
+            details["remoteCode"] = remote_code
+        raise ReaderFailure("READER_DISCOVERY_POLL_REJECTED", details) from None
+    except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException):
+        raise ReaderFailure("READER_DISCOVERY_POLL_UNAVAILABLE") from None
+
+    if len(body) > MAX_API_RESPONSE_BYTES or not 200 <= status < 300:
+        raise ReaderFailure("READER_DISCOVERY_RESPONSE_INVALID")
+    try:
+        result = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise ReaderFailure("READER_DISCOVERY_RESPONSE_INVALID") from None
+    if not isinstance(result, dict):
+        raise ReaderFailure("READER_DISCOVERY_RESPONSE_INVALID")
+    job = result.get("job")
+    if job is None:
+        return None
+    if (not isinstance(job, dict)
+            or not isinstance(job.get("jobId"), str)
+            or not re.fullmatch(r"[0-9a-fA-F-]{36}", job["jobId"])
+            or job.get("accountExternalId") != settings["accountExternalId"]):
+        raise ReaderFailure("READER_DISCOVERY_RESPONSE_INVALID")
+    return {"jobId": job["jobId"], "accountExternalId": job["accountExternalId"]}
+
+
+def _discover_session_directory(database: Any) -> list[dict[str, str | None]]:
+    try:
+        with _quiet_upstream_output():
+            raw_sessions = database.get_sessions(limit=MAX_DISCOVERY_SESSIONS)
+    except Exception:
+        raise ReaderFailure("READER_DIRECTORY_READ_FAILED") from None
+    if not isinstance(raw_sessions, list) or len(raw_sessions) > MAX_DISCOVERY_SESSIONS:
+        raise ReaderFailure("READER_DIRECTORY_INVALID")
+
+    result: list[dict[str, str | None]] = []
+    seen: set[str] = set()
+    for row in raw_sessions:
+        if not isinstance(row, dict):
+            continue
+        conversation_id = str(row.get("username") or "").strip()
+        if (not conversation_id or len(conversation_id) > 512
+                or any(ord(character) < 32 for character in conversation_id)
+                or conversation_id.endswith("@chatroom") or conversation_id.startswith("gh_")
+                or conversation_id in EXCLUDED_DIRECT_IDS or conversation_id in seen):
+            continue
+        seen.add(conversation_id)
+        try:
+            with _quiet_upstream_output():
+                display_name = database.get_nickname(conversation_id)
+        except Exception:
+            display_name = None
+        if not isinstance(display_name, str) or display_name == conversation_id:
+            display_name = None
+        elif len(display_name) > 200 or any(ord(character) < 32 for character in display_name):
+            display_name = None
+        result.append({"conversationExternalId": conversation_id, "displayName": display_name})
+    return result
+
+
 def _report_transport_success(contract_name: str, status: int, receipt_summary: dict[str, Any]) -> None:
     destination = sys.__stderr__ or sys.stderr
     summary = {
@@ -364,7 +549,8 @@ def _open_database(settings: dict[str, Any], db_module: Any) -> tuple[Any, Path]
                 for row in database.get_sessions(limit=2000)
                 if isinstance(row, dict)
             }
-            if settings["conversationExternalId"] not in conversation_ids:
+            missing_conversations = set(settings.get("conversationExternalIds", [])) - conversation_ids
+            if missing_conversations:
                 raise ReaderFailure("DIRECT_CONVERSATION_NOT_FOUND")
         return database, workdir
     except ReaderFailure:
@@ -373,6 +559,125 @@ def _open_database(settings: dict[str, Any], db_module: Any) -> tuple[Any, Path]
     except Exception:
         shutil.rmtree(workdir, ignore_errors=True)
         raise ReaderFailure("WECHAT_DATABASE_UNAVAILABLE") from None
+
+
+def _resolve_scope_for_contact(
+    database: Any,
+    display_name: str,
+    wechat_executable_path: str | None,
+) -> dict[str, str]:
+    name = display_name.strip() if isinstance(display_name, str) else ""
+    if not name or len(name) > 200 or any(ord(character) < 32 for character in name):
+        raise ReaderFailure("SCOPE_DISPLAY_NAME_INVALID")
+
+    account_id = str(getattr(database, "account", "") or "").strip()
+    if not account_id or len(account_id) > 512 or any(ord(character) < 32 for character in account_id):
+        raise ReaderFailure("SCOPE_ACTIVE_ACCOUNT_UNAVAILABLE")
+
+    self_wxid = str(getattr(database, "wxid", "") or "").strip()
+    try:
+        with _quiet_upstream_output():
+            self_info = database.get_self_info()
+    except Exception:
+        raise ReaderFailure("SCOPE_ACTIVE_ACCOUNT_UNVERIFIED") from None
+    if not isinstance(self_info, dict) or not self_wxid or str(self_info.get("username") or "") != self_wxid:
+        raise ReaderFailure("SCOPE_ACTIVE_ACCOUNT_UNVERIFIED")
+
+    try:
+        with _quiet_upstream_output():
+            connection = database._contact_conn()
+        if connection is None:
+            raise ReaderFailure("SCOPE_CONTACT_DATABASE_UNAVAILABLE")
+        try:
+            rows = connection.execute(
+                "SELECT username, nick_name, remark FROM contact WHERE remark=? OR nick_name=?",
+                (name, name),
+            ).fetchall()
+        finally:
+            connection.close()
+    except ReaderFailure:
+        raise
+    except Exception:
+        raise ReaderFailure("SCOPE_CONTACT_LOOKUP_FAILED") from None
+
+    matches: set[str] = set()
+    for row in rows:
+        username = str(row["username"] or "").strip()
+        primary_name = str(row["remark"] or row["nick_name"] or username).strip()
+        if (primary_name != name or not username or len(username) > 512
+                or any(ord(character) < 32 for character in username)
+                or username.endswith("@chatroom") or username.startswith("gh_")
+                or username in EXCLUDED_DIRECT_IDS):
+            continue
+        matches.add(username)
+
+    if not matches:
+        raise ReaderFailure("SCOPE_CONTACT_NOT_FOUND")
+    if len(matches) != 1:
+        raise ReaderFailure("SCOPE_CONTACT_AMBIGUOUS")
+
+    executable = (wechat_executable_path or "").strip()
+    if len(executable) > 1024 or any(ord(character) < 32 for character in executable):
+        raise ReaderFailure("SCOPE_WECHAT_PATH_INVALID")
+    return {
+        "provider": PROVIDER,
+        "accountExternalId": account_id,
+        "conversationExternalId": next(iter(matches)),
+        "displayName": name,
+        "wechatExecutablePath": executable,
+    }
+
+
+def _run_scope_resolution(args: argparse.Namespace, db_module: Any) -> None:
+    request_path = Path(os.path.abspath(args.request_file))
+    output_path = Path(os.path.abspath(args.output))
+    request_parent = os.path.normcase(os.path.abspath(os.path.dirname(args.request_file)))
+    output_parent = os.path.normcase(os.path.abspath(os.path.dirname(args.output)))
+    state_root = Path(request_parent)
+    is_private_formal_root = (
+        state_root.name.casefold() == "formal"
+        and state_root.parent.name.casefold() == "wechataicopilot"
+    )
+    if (not is_private_formal_root or request_parent != output_parent
+            or request_path.name != "scope-request.tmp.json"
+            or output_path.name != "scope.tmp.json"):
+        raise ReaderFailure("SCOPE_BOOTSTRAP_PATH_INVALID")
+
+    try:
+        request = json.loads(request_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        raise ReaderFailure("SCOPE_BOOTSTRAP_REQUEST_INVALID") from None
+    if not isinstance(request, dict):
+        raise ReaderFailure("SCOPE_BOOTSTRAP_REQUEST_INVALID")
+
+    with _quiet_upstream_output():
+        data_dir = db_module.auto_detect_db_dir()
+    if not data_dir:
+        raise ReaderFailure("WECHAT_DATABASE_NOT_FOUND")
+
+    workdir = Path(tempfile.mkdtemp(prefix="weca-scope-"))
+    try:
+        with _quiet_upstream_output():
+            database = _readonly_database_class(db_module.WeChatDB)(
+                db_dir=data_dir,
+                workdir=str(workdir),
+                keys_file=str(workdir / "ephemeral-keys.json"),
+            )
+        scope = _resolve_scope_for_contact(
+            database,
+            request.get("displayName"),
+            request.get("wechatExecutablePath"),
+        )
+        output_path.write_text(
+            json.dumps(scope, ensure_ascii=False, separators=(",", ":")),
+            encoding="utf-8",
+        )
+    except ReaderFailure:
+        raise
+    except Exception:
+        raise ReaderFailure("SCOPE_RESOLUTION_FAILED") from None
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
 
 
 def _as_string(value: Any) -> str | None:
@@ -601,41 +906,204 @@ def _run_realtime(settings: dict[str, Any], db_module: Any) -> None:
     database, workdir = _open_database(settings, db_module)
     listener = None
     output_lock = threading.Lock()
+    target_lock = threading.RLock()
     callback_failed = threading.Event()
     callback_failure: list[ReaderFailure] = []
+    callbacks: dict[str, Any] = {}
+    poll_status_lock = threading.Lock()
+    poll_error_code: list[str | None] = [None]
+    started_at = dt.datetime.now(tz=dt.timezone.utc)
+    reader_instance_id = str(uuid.uuid4())
+    current_version = 0
+    last_error_code: str | None = None
+    final_state = "Stopped"
+    final_error_code: str | None = None
     try:
         with _quiet_upstream_output():
-            listener = db_module.Listener(database, interval=0.75, watermark_file="", max_retries=0)
+            local_app_data = Path(os.environ["LOCALAPPDATA"])
+            watermark_directory = local_app_data / "WeChatAiCopilot" / "Reader"
+            watermark_directory.mkdir(parents=True, exist_ok=True)
+            listener = db_module.Listener(
+                database,
+                interval=0.75,
+                watermark_file=str(watermark_directory / "listener-watermarks.json"),
+                max_retries=0,
+            )
+            original_poll_once = listener._poll_once
 
-            def on_message(row: dict[str, Any], _listener: Any) -> None:
+            def synchronized_poll_once() -> None:
+                with target_lock:
+                    original_poll_once()
+
+            # Serialize callback-map changes with Listener's poll snapshot.
+            listener._poll_once = synchronized_poll_once
+
+            def monitored_poll_loop() -> None:
+                while not listener._stop.is_set():
+                    try:
+                        listener._poll_once()
+                        with poll_status_lock:
+                            poll_error_code[0] = None
+                    except Exception:
+                        with poll_status_lock:
+                            poll_error_code[0] = "READER_POLL_FAILED"
+                    listener._stop.wait(listener.interval)
+
+            # The pinned Listener logs and suppresses poll exceptions internally.
+            # Keep its per-session dispatch behavior but report only a sanitized
+            # poll failure code through the Reader heartbeat.
+            listener._run = monitored_poll_loop
+            def get_available_conversations() -> set[str]:
+                with _quiet_upstream_output():
+                    return {
+                        str(row.get("username") or "").strip()
+                        for row in database.get_sessions(limit=2000)
+                        if isinstance(row, dict)
+                    }
+
+            def make_callback(conversation_external_id: str) -> Any:
+                scoped_settings = {**settings, "conversationExternalId": conversation_external_id}
+
+                def on_message(row: dict[str, Any], _listener: Any) -> None:
+                    try:
+                        identity = _realtime_source_identity(database, scoped_settings, row)
+                        event = _raw_event(scoped_settings, "Realtime", row, identity)
+                        if settings["transport"]["enabled"]:
+                            _post_contract(settings, "/api/reader/messages", "RawMessageEventV1", event)
+                        else:
+                            _emit_json_line(event, output_lock)
+                    except ReaderFailure as exc:
+                        if (exc.code == "FORMAL_API_REJECTED"
+                                and exc.details.get("remoteCode") == "READER_SCOPE_NOT_ALLOWED"):
+                            # A target may be removed while an already-dispatched
+                            # callback is finishing. Treat that revocation as an
+                            # intentional drop for this target only.
+                            return
+                        callback_failure.append(exc)
+                        callback_failed.set()
+                        raise
+                    except Exception:
+                        callback_failure.append(ReaderFailure("REALTIME_EVENT_READ_FAILED"))
+                        callback_failed.set()
+                        raise
+
+                return on_message
+
+            def apply_targets(target_ids: list[str]) -> None:
+                if len(target_ids) > MAX_MONITORED_TARGETS or len(set(target_ids)) != len(target_ids):
+                    raise ReaderFailure("READER_TARGETS_INVALID")
+                if set(target_ids) - get_available_conversations():
+                    raise ReaderFailure("DIRECT_CONVERSATION_NOT_FOUND")
+                desired = set(target_ids)
+                with target_lock:
+                    for conversation_external_id in list(callbacks):
+                        if conversation_external_id not in desired:
+                            listener.remove_listener(conversation_external_id, callbacks.pop(conversation_external_id))
+                    for conversation_external_id in target_ids:
+                        if conversation_external_id not in callbacks:
+                            callback = make_callback(conversation_external_id)
+                            listener.add_listener(conversation_external_id, callback)
+                            callbacks[conversation_external_id] = callback
+
+            if settings["transport"]["enabled"]:
                 try:
-                    identity = _realtime_source_identity(database, settings, row)
-                    event = _raw_event(settings, "Realtime", row, identity)
-                    if settings["transport"]["enabled"]:
-                        _post_contract(settings, "/api/reader/messages", "RawMessageEventV1", event)
-                    else:
-                        _emit_json_line(event, output_lock)
+                    initial_targets = _get_server_targets(settings)
+                    current_version = initial_targets["targetVersion"]
+                    apply_targets(initial_targets["conversationExternalIds"])
                 except ReaderFailure as exc:
-                    callback_failure.append(exc)
-                    callback_failed.set()
-                    raise
-                except Exception:
-                    callback_failure.append(ReaderFailure("REALTIME_EVENT_READ_FAILED"))
-                    callback_failed.set()
-                    raise
-
-            listener.add_listener(settings["conversationExternalId"], on_message)
+                    last_error_code = exc.code
+            else:
+                apply_targets(list(settings["conversationExternalIds"]))
             listener.start()
-            while not callback_failed.wait(1):
-                pass
-            raise callback_failure[0] if callback_failure else ReaderFailure("REALTIME_EVENT_READ_FAILED")
+            next_sync_at = 0.0
+            while not callback_failed.is_set():
+                now = time.monotonic()
+                if settings["transport"]["enabled"] and now >= next_sync_at:
+                    next_sync_at = now + 5
+                    try:
+                        target_snapshot = _get_server_targets(settings)
+                        target_version = target_snapshot["targetVersion"]
+                        target_ids = target_snapshot["conversationExternalIds"]
+                        if target_version < current_version:
+                            raise ReaderFailure("READER_TARGET_VERSION_REVERSED")
+                        if target_version == current_version and set(target_ids) != set(callbacks):
+                            raise ReaderFailure("READER_TARGET_VERSION_REUSED")
+                        if target_version != current_version:
+                            apply_targets(target_ids)
+                            current_version = target_version
+                        last_error_code = None
+                    except ReaderFailure as exc:
+                        last_error_code = exc.code
+
+                    with poll_status_lock:
+                        current_poll_error = poll_error_code[0]
+                    if current_poll_error is not None:
+                        last_error_code = current_poll_error
+
+                    try:
+                        discovery_job = _get_next_discovery_job(settings)
+                        if discovery_job is not None:
+                            try:
+                                sessions = _discover_session_directory(database)
+                                _post_contract(settings,
+                                    "/api/reader/discovery-jobs/" + urllib.parse.quote(discovery_job["jobId"], safe="") + "/sessions",
+                                    "ReaderDirectorySubmissionV1",
+                                    {"accountExternalId": settings["accountExternalId"], "sessions": sessions})
+                            except ReaderFailure as exc:
+                                try:
+                                    _post_contract(settings,
+                                        "/api/reader/discovery-jobs/" + urllib.parse.quote(discovery_job["jobId"], safe="") + "/fail",
+                                        "ReaderDirectoryFailureV1", {"errorCode": exc.code})
+                                except ReaderFailure:
+                                    pass
+                    except ReaderFailure as exc:
+                        last_error_code = exc.code
+
+                    state = "Error" if last_error_code else ("Listening" if callbacks else "Idle")
+                    heartbeat = {
+                        "readerInstanceId": reader_instance_id,
+                        "accountExternalId": settings["accountExternalId"],
+                        "state": state,
+                        "targetVersion": current_version,
+                        "listeningTargetCount": len(callbacks),
+                        "lastErrorCode": last_error_code,
+                        "startedAtUtc": _utc_text(started_at),
+                    }
+                    try:
+                        _post_contract(settings, "/api/reader/status", "ReaderStatusHeartbeatV1", heartbeat)
+                    except ReaderFailure as exc:
+                        last_error_code = exc.code
+                if callback_failed.wait(1):
+                    break
+
+            if callback_failure:
+                final_state = "Error"
+                final_error_code = callback_failure[0].code
+                raise callback_failure[0]
     except KeyboardInterrupt:
-        return
-    except ReaderFailure:
+        final_state = "Stopped"
+    except ReaderFailure as exc:
+        final_state = "Error"
+        final_error_code = exc.code
         raise
     except Exception:
+        final_state = "Error"
+        final_error_code = "REALTIME_CAPTURE_FAILED"
         raise ReaderFailure("REALTIME_CAPTURE_FAILED") from None
     finally:
+        if settings["transport"]["enabled"]:
+            try:
+                _post_contract(settings, "/api/reader/status", "ReaderStatusHeartbeatV1", {
+                    "readerInstanceId": reader_instance_id,
+                    "accountExternalId": settings["accountExternalId"],
+                    "state": final_state,
+                    "targetVersion": current_version,
+                    "listeningTargetCount": 0 if final_state == "Stopped" else len(callbacks),
+                    "lastErrorCode": final_error_code,
+                    "startedAtUtc": _utc_text(started_at),
+                })
+            except ReaderFailure:
+                pass
         if listener is not None:
             try:
                 with _quiet_upstream_output():
@@ -727,6 +1195,8 @@ def _read_history(
 def _run_history(args: argparse.Namespace, settings: dict[str, Any], db_module: Any) -> None:
     if not args.job_id.strip() or len(args.job_id) > 128:
         raise ReaderFailure("HISTORY_JOB_ID_REQUIRED")
+    if not settings.get("conversationExternalId"):
+        raise ReaderFailure("HISTORY_CONVERSATION_REQUIRED")
     if not 1 <= args.max_rows <= MAX_HISTORY_ROWS:
         raise ReaderFailure("HISTORY_MAX_ROWS_OUT_OF_RANGE")
     if not 1 <= args.batch_size <= MAX_BATCH_SIZE:
@@ -772,6 +1242,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Read-only local WeChat source adapter for M1.")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("realtime", help="emit RawMessageEventV1 JSON lines for the configured direct conversation")
+    resolve_scope = subparsers.add_parser("resolve-scope", help="resolve one exact approved direct contact name without reading message content")
+    resolve_scope.add_argument("--request-file", required=True)
+    resolve_scope.add_argument("--output", required=True)
     history = subparsers.add_parser("history", help="emit bounded HistoryBatchV1 JSON lines")
     history.add_argument("--job-id", required=True)
     history.add_argument("--from-utc")
@@ -786,6 +1259,9 @@ def main() -> int:
     try:
         if os.name != "nt":
             raise ReaderFailure("WINDOWS_REQUIRED")
+        if args.command == "resolve-scope":
+            _run_scope_resolution(args, _import_readonly_module())
+            return 0
         settings = _load_settings()
         db_module = _import_readonly_module()
         if args.command == "realtime":

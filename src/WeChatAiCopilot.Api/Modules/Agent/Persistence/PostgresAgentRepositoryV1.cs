@@ -53,10 +53,10 @@ public sealed class PostgresAgentRepositoryV1(NpgsqlDataSource dataSource) : IAg
         const string batchSql = """
             INSERT INTO copilot.agent_suggestion_batches (
                 batch_id, run_id, account_id, conversation_id, persona_preset_id,
-                context_revision, status, created_at)
+                context_revision, status, created_at, execution_profile_id)
             VALUES (
                 @batch_id, @run_id, @account_id, @conversation_id, @persona_preset_id,
-                @context_revision, @status, @created_at);
+                @context_revision, @status, @created_at, @execution_profile_id);
             """;
         const string suggestionSql = """
             INSERT INTO copilot.agent_suggestions (
@@ -76,6 +76,7 @@ public sealed class PostgresAgentRepositoryV1(NpgsqlDataSource dataSource) : IAg
             command.Parameters.AddWithValue("context_revision", batch.ContextRevision!);
             command.Parameters.AddWithValue("status", batch.Status.ToString());
             command.Parameters.AddWithValue("created_at", batch.CreatedAtUtc);
+            command.Parameters.AddWithValue("execution_profile_id", batch.ExecutionProfileId.ToString());
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 
@@ -105,7 +106,7 @@ public sealed class PostgresAgentRepositoryV1(NpgsqlDataSource dataSource) : IAg
         ArgumentNullException.ThrowIfNull(scope);
         const string batchSql = """
             SELECT run_id, batch_id, account_id, conversation_id, persona_preset_id,
-                   context_revision, status, created_at
+                   context_revision, status, created_at, execution_profile_id
             FROM copilot.agent_suggestion_batches
             WHERE batch_id = @batch_id
               AND account_id = @account_id
@@ -120,6 +121,7 @@ public sealed class PostgresAgentRepositoryV1(NpgsqlDataSource dataSource) : IAg
         string contextRevision;
         AgentRunStatusV1 status;
         DateTimeOffset createdAt;
+        AgentExecutionProfileIdV1 executionProfileId;
         await using (var connection = await dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false))
         await using (var command = new NpgsqlCommand(batchSql, connection))
         {
@@ -140,6 +142,7 @@ public sealed class PostgresAgentRepositoryV1(NpgsqlDataSource dataSource) : IAg
             contextRevision = reader.GetString(5);
             status = ParseEnum<AgentRunStatusV1>(reader.GetString(6), "suggestion batch status");
             createdAt = reader.GetFieldValue<DateTimeOffset>(7);
+            executionProfileId = ParseEnum<AgentExecutionProfileIdV1>(reader.GetString(8), "suggestion execution profile");
         }
 
         var suggestions = new List<AgentSuggestionV1>(3);
@@ -178,6 +181,7 @@ public sealed class PostgresAgentRepositoryV1(NpgsqlDataSource dataSource) : IAg
             RunId = runId.ToString("N"),
             BatchId = foundBatchId.ToString("N"),
             TaskType = AgentTaskTypeV1.ReplyCandidates,
+            ExecutionProfileId = executionProfileId,
             AccountId = accountId,
             ConversationId = conversationId,
             PersonaPresetId = personaPresetId,
@@ -589,6 +593,7 @@ public sealed class PostgresAgentRepositoryV1(NpgsqlDataSource dataSource) : IAg
             StartedAtUtc = reader.GetFieldValue<DateTimeOffset>(8),
             EndedAtUtc = reader.IsDBNull(9) ? null : reader.GetFieldValue<DateTimeOffset>(9),
             ErrorCode = reader.IsDBNull(10) ? null : reader.GetString(10),
+            ExecutionProfileId = budgetMetadata?.ExecutionProfileId ?? AgentExecutionProfileIdV1.Quick,
             BudgetMetadata = budgetMetadata
         };
     }
@@ -635,6 +640,10 @@ public sealed class PostgresAgentRepositoryV1(NpgsqlDataSource dataSource) : IAg
 
         _ = ParseId(batch.BatchId!, "batchId");
         _ = ParseId(batch.RunId!, "runId");
+        if (!Enum.IsDefined(batch.ExecutionProfileId))
+        {
+            throw new ArgumentException("The suggestion execution profile is invalid.", nameof(batch));
+        }
         foreach (var suggestion in batch.Suggestions!)
         {
             _ = ParseId(suggestion.Id!, "suggestionId");

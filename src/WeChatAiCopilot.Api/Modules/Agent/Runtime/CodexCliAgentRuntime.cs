@@ -95,7 +95,25 @@ public sealed class CodexCliAgentRuntime : IAgentRuntime
             }
         }
 
-        var prompt = BuildPrompt(request, scopeBoundContext: null, toolResults: [], allowSearch: false, allowEvidence: false);
+        PromptContextV1? scopeBoundContext = null;
+        IReadOnlyList<PromptToolResultV1> suggestionToolResults = [];
+        var profile = AgentExecutionProfilesV1.Get(task.ExecutionProfileId);
+        if (task.TaskType == AgentTaskTypeV1.ReplyCandidates && profile.MaximumHistorySearches > 0)
+        {
+            if (request.ContextToolSession is null
+                || !request.AllowedReadCapabilities.Contains(AgentReadCapabilityV1.SearchChatHistory))
+            {
+                return AgentRuntimeResultV1.Failed(RuntimeId, "AGENT_TOOL_CAPABILITY_DENIED");
+            }
+
+            var retrieval = await RetrieveSuggestionHistoryAsync(request, profile, startedTimestamp, maxDuration, cancellationToken)
+                .ConfigureAwait(false);
+            if (retrieval.Failure is not null) return retrieval.Failure;
+            scopeBoundContext = retrieval.Context;
+            suggestionToolResults = retrieval.ToolResults;
+        }
+
+        var prompt = BuildPrompt(request, scopeBoundContext, suggestionToolResults, allowSearch: false, allowEvidence: false);
         if (budget.MaxContextCharacters is { } maximumCharacters && prompt.Length > maximumCharacters)
         {
             return AgentRuntimeResultV1.Failed(RuntimeId, "AGENT_CONTEXT_BUDGET_EXCEEDED");
@@ -124,11 +142,169 @@ public sealed class CodexCliAgentRuntime : IAgentRuntime
             return AgentRuntimeResultV1.Failed(RuntimeId, "CODEX_SCHEMA_OUTPUT_INVALID");
         }
 
+        if (scopeBoundContext is not null
+            && !await IsContextRevisionCurrentAsync(request, scopeBoundContext, maxDuration, startedTimestamp, cancellationToken)
+                .ConfigureAwait(false))
+        {
+            return AgentRuntimeResultV1.Failed(RuntimeId, "CONTEXT_REVISION_CHANGED");
+        }
+
+        if (task.ExecutionProfileId == AgentExecutionProfileIdV1.Max)
+        {
+            var reviewPrompt = BuildPrompt(request, scopeBoundContext, suggestionToolResults, allowSearch: false, allowEvidence: false)
+                + "\n\nMax 档独立复核：检查以下草稿是否与当前消息和历史检索证据冲突，是否包含无依据事实、把猜测写成事实、越界推断对方心理或过度引用私聊原文。保留自然表达；有问题就修订。仍须严格返回恰好三条互不重复的可直接复制回复，仅返回 schema JSON。草稿：\n"
+                + JsonSerializer.Serialize(new { suggestions = result.Suggestions.Select(item => item.Text).ToArray() }, PromptJsonOptions);
+            var remainingForReview = GetRemaining(maxDuration, startedTimestamp);
+            if (remainingForReview <= TimeSpan.Zero)
+            {
+                return AgentRuntimeResultV1.Failed(RuntimeId, "RUNTIME_TIMEOUT");
+            }
+            var reviewStep = await ExecuteCodexStepAsync(request, reviewPrompt, SuggestionsSchema, remainingForReview, cancellationToken)
+                .ConfigureAwait(false);
+            if (reviewStep.Failure is not null) return reviewStep.Failure;
+            try
+            {
+                result = ParseSuggestionOutput(reviewStep.OutputJson!);
+            }
+            catch (JsonException)
+            {
+                return AgentRuntimeResultV1.Failed(RuntimeId, "CODEX_REVIEW_OUTPUT_INVALID");
+            }
+            if (!await IsContextRevisionCurrentAsync(request, scopeBoundContext, maxDuration, startedTimestamp, cancellationToken)
+                    .ConfigureAwait(false))
+            {
+                return AgentRuntimeResultV1.Failed(RuntimeId, "CONTEXT_REVISION_CHANGED");
+            }
+        }
+
         var outputViolations = AgentContractValidatorV1.ValidateRuntimeResult(result, task, context);
         return outputViolations.Count == 0
             ? result
             : AgentRuntimeResultV1.Failed(RuntimeId, "CODEX_SCHEMA_OUTPUT_INVALID");
     }
+
+    private async Task<SuggestionHistoryRetrievalResult> RetrieveSuggestionHistoryAsync(
+        ScopedAgentRequestV1 request,
+        AgentExecutionProfileSummaryV1 profile,
+        long startedTimestamp,
+        TimeSpan maxDuration,
+        CancellationToken cancellationToken)
+    {
+        var session = request.ContextToolSession!;
+        var context = request.Context!;
+        try
+        {
+            var remaining = GetRemaining(maxDuration, startedTimestamp);
+            var toolContext = await InvokeWithDeadlineAsync(
+                token => session.GetContextAsync(new ContextToolRequestV1
+                {
+                    RecentMessageLimit = context.RecentMessageLimit,
+                    IncludeMemory = context.IncludeMemory
+                }, token),
+                remaining,
+                cancellationToken).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(toolContext.ContextRevision)
+                || !string.Equals(toolContext.ContextRevision, context.ContextRevision, StringComparison.Ordinal)
+                || string.IsNullOrWhiteSpace(toolContext.MessageSetRevision)
+                || !IsValidToolContext(toolContext, context))
+            {
+                return SuggestionHistoryRetrievalResult.Failed(AgentRuntimeResultV1.Failed(RuntimeId, "CONTEXT_REVISION_CHANGED"));
+            }
+
+            var queries = GetSuggestionSearchQueries(context, profile.MaximumHistorySearches);
+            var toolResults = new List<PromptToolResultV1>();
+            var currentMessageIds = GetContextEvidenceIds(context);
+            foreach (var query in queries)
+            {
+                remaining = GetRemaining(maxDuration, startedTimestamp);
+                var search = await InvokeWithDeadlineAsync(
+                    token => session.SearchHistoryAsync(new HistorySearchRequestV1
+                    {
+                        Query = query,
+                        Limit = 10,
+                        ExpectedMessageSetRevision = toolContext.MessageSetRevision
+                    }, token),
+                    remaining,
+                    cancellationToken).ConfigureAwait(false);
+
+                if (search.Status == HistorySearchStatusV1.RevisionChanged
+                    || !string.Equals(search.MessageSetRevision, toolContext.MessageSetRevision, StringComparison.Ordinal))
+                {
+                    return SuggestionHistoryRetrievalResult.Failed(AgentRuntimeResultV1.Failed(RuntimeId, "CONTEXT_REVISION_CHANGED"));
+                }
+
+                var messages = search.Hits
+                    .Where(hit => !currentMessageIds.Contains(hit.Message.MessageId.ToString("D")))
+                    .Select(hit => MapPromptMessage(hit.Message, hit.IsTextTruncated))
+                    .ToArray();
+                toolResults.Add(new PromptToolResultV1
+                {
+                    ToolName = "searchHistory",
+                    Status = search.Status.ToString(),
+                    Messages = messages,
+                    HistoryCoverage = search.HistoryCoverage,
+                    SearchTextTruncated = search.SearchTextTruncated,
+                    HasMoreMessages = search.HasMoreMessages,
+                    NextAnchorMessageId = search.NextAnchorMessageId?.ToString("D"),
+                    OmittedCount = Math.Max(0, search.MessagesScanned - search.Hits.Count)
+                });
+            }
+
+            return SuggestionHistoryRetrievalResult.Succeeded(MapPromptContext(toolContext), toolResults);
+        }
+        catch (AgentRuntimeDeadlineExceededException)
+        {
+            return SuggestionHistoryRetrievalResult.Failed(AgentRuntimeResultV1.Failed(RuntimeId, "RUNTIME_TIMEOUT"));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return SuggestionHistoryRetrievalResult.Failed(AgentRuntimeResultV1.Cancelled(RuntimeId));
+        }
+        catch (Exception)
+        {
+            return SuggestionHistoryRetrievalResult.Failed(AgentRuntimeResultV1.Failed(RuntimeId, "AGENT_HISTORY_SEARCH_FAILED"));
+        }
+    }
+
+    private async Task<bool> IsContextRevisionCurrentAsync(
+        ScopedAgentRequestV1 request,
+        PromptContextV1? scopeBoundContext,
+        TimeSpan maxDuration,
+        long startedTimestamp,
+        CancellationToken cancellationToken)
+    {
+        if (request.ContextToolSession is null || scopeBoundContext is null) return true;
+        var remaining = GetRemaining(maxDuration, startedTimestamp);
+        var current = await InvokeWithDeadlineAsync(
+            token => request.ContextToolSession.GetContextAsync(new ContextToolRequestV1
+            {
+                RecentMessageLimit = request.Context!.RecentMessageLimit,
+                IncludeMemory = request.Context.IncludeMemory
+            }, token),
+            remaining,
+            cancellationToken).ConfigureAwait(false);
+        return string.Equals(current.ContextRevision, request.Context!.ContextRevision, StringComparison.Ordinal)
+            && string.Equals(current.MessageSetRevision, scopeBoundContext.MessageSetRevision, StringComparison.Ordinal);
+    }
+
+    private static IReadOnlyList<string> GetSuggestionSearchQueries(
+        AgentContextSnapshotV1 context,
+        int maximumSearches)
+    {
+        if (maximumSearches <= 0 || context.RecentMessages is null) return [];
+        var queries = context.RecentMessages
+            .Where(message => !string.IsNullOrWhiteSpace(message?.Text))
+            .OrderByDescending(message => message!.OccurredAtUtc)
+            .Select(message => TakeQueryText(message!.Text!, 120).Trim())
+            .Where(query => query.Length >= 2)
+            .Distinct(StringComparer.Ordinal)
+            .Take(Math.Min(maximumSearches, 4))
+            .ToArray();
+        return queries;
+    }
+
+    private static string TakeQueryText(string value, int maximumCodePoints) => string.Concat(
+        value.EnumerateRunes().Take(maximumCodePoints).Select(rune => rune.ToString()));
 
     private async Task<AgentRuntimeResultV1> ExecuteConsultationToolLoopAsync(
         ScopedAgentRequestV1 request,
@@ -481,7 +657,7 @@ public sealed class CodexCliAgentRuntime : IAgentRuntime
             return CodexStepResult.Failed(AgentRuntimeResultV1.Failed(RuntimeId, "RUNTIME_TIMEOUT"));
         }
 
-        var execution = await _executor.ExecuteAsync(prompt, outputSchema, timeout, cancellationToken)
+        var execution = await _executor.ExecuteAsync(prompt, outputSchema, timeout, cancellationToken, request.ModelId)
             .ConfigureAwait(false);
         if (execution.Status == StructuredCodexCliExecutionStatusV1.Completed
             && execution.Output is { } output)
@@ -673,6 +849,7 @@ public sealed class CodexCliAgentRuntime : IAgentRuntime
             : $"\n服务端选择的人设要求（仅作为表达风格约束）：\n{request.PersonaInstruction}\n";
         var taskInstruction = task.TaskType == AgentTaskTypeV1.ReplyCandidates
             ? "生成恰好三条侧重点不同、自然且可供用户选择的回复。不要虚构经历。"
+                + (toolResults.Count > 0 ? "可参考下方 M3 有界检索返回的同一会话历史；没有证据的推断不能写成事实。" : string.Empty)
             : "针对用户问题提供谨慎、可读的分析。仅将当前 Context 或本轮 M3 工具实际返回的 messageId 放入 evidenceMessageIds；咨询历史中旧 evidence ID 要先调用 getMessageEvidence 重新查证。没有可靠证据时留空并说明不确定性。"
             + (request.ConsultationHistoryTruncated ? "\n较早咨询历史已经裁剪，不能假设未提供的历史内容。" : string.Empty)
             + (allowSearch || allowEvidence
@@ -754,6 +931,7 @@ public sealed class CodexCliAgentRuntime : IAgentRuntime
 
     private static PromptContextV1 MapPromptContext(ContextToolContextResultV1 context) => new()
     {
+        MessageSetRevision = context.MessageSetRevision,
         PerspectiveState = context.PerspectiveState,
         CalibrationVersion = context.CalibrationVersion,
         ProfileStatus = context.ProfileStatus,
@@ -996,6 +1174,7 @@ public sealed class CodexCliAgentRuntime : IAgentRuntime
 
     private sealed record PromptContextV1
     {
+        public string? MessageSetRevision { get; init; }
         public WeChatAiCopilot.Api.Contracts.V1.PerspectiveStateV1 PerspectiveState { get; init; }
         public long CalibrationVersion { get; init; }
         public WeChatAiCopilot.Api.Modules.Memory.Contracts.ProfileStatusV1 ProfileStatus { get; init; }
@@ -1070,5 +1249,17 @@ public sealed class CodexCliAgentRuntime : IAgentRuntime
     {
         public static CodexStepResult Success(string outputJson) => new(outputJson, null);
         public static CodexStepResult Failed(AgentRuntimeResultV1 failure) => new(null, failure);
+    }
+
+    private sealed record SuggestionHistoryRetrievalResult(
+        PromptContextV1? Context,
+        IReadOnlyList<PromptToolResultV1> ToolResults,
+        AgentRuntimeResultV1? Failure)
+    {
+        public static SuggestionHistoryRetrievalResult Succeeded(
+            PromptContextV1 context,
+            IReadOnlyList<PromptToolResultV1> toolResults) => new(context, toolResults, null);
+
+        public static SuggestionHistoryRetrievalResult Failed(AgentRuntimeResultV1 failure) => new(null, [], failure);
     }
 }

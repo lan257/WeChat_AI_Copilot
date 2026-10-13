@@ -8,6 +8,7 @@ import importlib.util
 import io
 import json
 import os
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -50,6 +51,14 @@ class RecordingOpener:
         self.requests.append((request, timeout))
         if self.outcomes:
             outcome = self.outcomes.pop(0)
+        elif getattr(request, "full_url", "").endswith("/api/reader/status"):
+            outcome = FakeResponse(200, b'{"accepted":true}')
+        elif getattr(request, "full_url", "").endswith("/sessions"):
+            payload = json.loads(request.data.decode("utf-8"))  # type: ignore[union-attr]
+            outcome = FakeResponse(200, json.dumps({
+                "accepted": True,
+                "discoveredConversationCount": len(payload["sessions"]),
+            }).encode("utf-8"))
         elif getattr(request, "full_url", "").endswith("/api/reader/messages"):
             outcome = FakeResponse(202, b'{"matchStatus":"Created","created":true}')
         else:
@@ -73,7 +82,96 @@ class RecordingOpener:
         return outcome  # type: ignore[return-value]
 
 
+class FakeScopeDatabase:
+    account = "wxid_owner_abcd"
+    wxid = "wxid_owner"
+
+    def __init__(self, contacts: list[tuple[str, str, str]]) -> None:
+        self.connection = sqlite3.connect(":memory:")
+        self.connection.row_factory = sqlite3.Row
+        self.connection.execute("CREATE TABLE contact (username TEXT, nick_name TEXT, remark TEXT)")
+        self.connection.executemany(
+            "INSERT INTO contact (username, nick_name, remark) VALUES (?, ?, ?)", contacts
+        )
+
+    def get_self_info(self) -> dict[str, str]:
+        return {"username": self.wxid}
+
+    def _contact_conn(self) -> sqlite3.Connection:
+        return self.connection
+
+
+class FakeScopeBootstrapDatabase(FakeScopeDatabase):
+    def __init__(self, **_kwargs: object) -> None:
+        super().__init__([("wxid_target", "合成联系人甲", "")])
+
+
 class ReaderConfigTests(unittest.TestCase):
+    def test_scope_bootstrap_uses_only_private_fixed_request_and_output_files(self) -> None:
+        class FakeDatabaseModule:
+            WeChatDB = FakeScopeBootstrapDatabase
+
+            @staticmethod
+            def auto_detect_db_dir() -> str:
+                return "fake-wechat-data"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_root = Path(temp_dir) / "WeChatAiCopilot" / "Formal"
+            state_root.mkdir(parents=True)
+            request_path = state_root / "scope-request.tmp.json"
+            output_path = state_root / "scope.tmp.json"
+            request_path.write_text(json.dumps({
+                "displayName": "合成联系人甲",
+                "wechatExecutablePath": "",
+            }), encoding="utf-8")
+            with mock.patch.dict(os.environ, {"LOCALAPPDATA": temp_dir}):
+                reader._run_scope_resolution(
+                    Namespace(request_file=str(request_path), output=str(output_path)),
+                    FakeDatabaseModule,
+                )
+
+            scope = json.loads(output_path.read_text(encoding="utf-8"))
+            self.assertEqual(scope["provider"], "local-wechat")
+            self.assertEqual(scope["conversationExternalId"], "wxid_target")
+            self.assertEqual(scope["displayName"], "合成联系人甲")
+            self.assertNotIn("messages", scope)
+
+    def test_scope_resolution_returns_only_exact_direct_contact(self) -> None:
+        database = FakeScopeDatabase([
+            ("wxid_target", "合成联系人甲", ""),
+            ("wxid_other", "另一个联系人", ""),
+            ("team@chatroom", "合成联系人甲", ""),
+        ])
+
+        scope = reader._resolve_scope_for_contact(
+            database, "合成联系人甲", r"C:\Program Files\Tencent\WeChat\Weixin.exe"
+        )
+
+        self.assertEqual(scope["provider"], "local-wechat")
+        self.assertEqual(scope["accountExternalId"], "wxid_owner_abcd")
+        self.assertEqual(scope["conversationExternalId"], "wxid_target")
+        self.assertEqual(scope["displayName"], "合成联系人甲")
+
+    def test_scope_resolution_rejects_ambiguous_exact_contact_names(self) -> None:
+        database = FakeScopeDatabase([
+            ("wxid_first", "同名联系人", ""),
+            ("wxid_second", "同名联系人", ""),
+        ])
+
+        with self.assertRaisesRegex(reader.ReaderFailure, "SCOPE_CONTACT_AMBIGUOUS"):
+            reader._resolve_scope_for_contact(database, "同名联系人", None)
+
+    def test_scope_resolution_rejects_contacts_not_found_or_wrong_account_identity(self) -> None:
+        database = FakeScopeDatabase([("wxid_target", "其他联系人", "")])
+        with self.assertRaisesRegex(reader.ReaderFailure, "SCOPE_CONTACT_NOT_FOUND"):
+            reader._resolve_scope_for_contact(database, "指定联系人", None)
+
+        database = FakeScopeDatabase([("wxid_target", "指定联系人", "")])
+        database.get_self_info = lambda: {"username": "wxid_different"}  # type: ignore[method-assign]
+        with self.assertRaisesRegex(reader.ReaderFailure, "SCOPE_ACTIVE_ACCOUNT_UNVERIFIED"):
+            reader._resolve_scope_for_contact(database, "指定联系人", None)
+
+
     def test_api_base_url_requires_https_for_remote_hosts(self) -> None:
         self.assertEqual(
             reader._validate_api_base_url(" http://localhost:5080/ "),
@@ -119,6 +217,55 @@ class ReaderConfigTests(unittest.TestCase):
             })
 
             document["conversationExternalId"] = "room@chatroom"
+            config_path.write_text(json.dumps(document), encoding="utf-8")
+            with mock.patch.dict(os.environ, {"LOCALAPPDATA": temp_dir}):
+                with self.assertRaisesRegex(reader.ReaderFailure, "DIRECT_CONVERSATIONS_ONLY"):
+                    reader._load_settings()
+
+    def test_server_managed_multi_target_settings_can_start_without_a_static_session(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "WeChatAiCopilot" / "Reader" / "settings.json"
+            config_path.parent.mkdir(parents=True)
+            config_path.write_text(json.dumps({
+                "schemaVersion": 1,
+                "enabled": True,
+                "accountExternalId": "account-1",
+                "conversationExternalId": "",
+                "conversationExternalIds": [],
+                "transport": {
+                    "enabled": True,
+                    "apiBaseUrl": "http://127.0.0.1:5080",
+                    "readerBearerToken": "t" * 40,
+                },
+            }), encoding="utf-8")
+            with mock.patch.dict(os.environ, {"LOCALAPPDATA": temp_dir}):
+                settings = reader._load_settings()
+            self.assertEqual(settings["accountExternalId"], "account-1")
+            self.assertEqual(settings["conversationExternalIds"], [])
+            self.assertEqual(settings["conversationExternalId"], "")
+
+    def test_server_managed_targets_are_bounded_and_direct_only(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "WeChatAiCopilot" / "Reader" / "settings.json"
+            config_path.parent.mkdir(parents=True)
+            document = {
+                "schemaVersion": 1,
+                "enabled": True,
+                "accountExternalId": "account-1",
+                "conversationExternalId": "",
+                "conversationExternalIds": ["first", "first"],
+                "transport": {
+                    "enabled": True,
+                    "apiBaseUrl": "http://127.0.0.1:5080",
+                    "readerBearerToken": "t" * 40,
+                },
+            }
+            config_path.write_text(json.dumps(document), encoding="utf-8")
+            with mock.patch.dict(os.environ, {"LOCALAPPDATA": temp_dir}):
+                with self.assertRaisesRegex(reader.ReaderFailure, "READER_TARGETS_INVALID"):
+                    reader._load_settings()
+
+            document["conversationExternalIds"] = ["room@chatroom"]
             config_path.write_text(json.dumps(document), encoding="utf-8")
             with mock.patch.dict(os.environ, {"LOCALAPPDATA": temp_dir}):
                 with self.assertRaisesRegex(reader.ReaderFailure, "DIRECT_CONVERSATIONS_ONLY"):
@@ -193,6 +340,79 @@ class ReaderContractTests(unittest.TestCase):
         self.assertTrue(str(event["externalMessageId"]).startswith("wx4:"))
         self.assertIn('"contract":"RawMessageEventV1"', stderr.getvalue())
         self.assertNotIn("t" * 40, stderr.getvalue())
+
+    def test_reader_status_heartbeat_uses_authenticated_json_without_chat_data(self) -> None:
+        opener = RecordingOpener()
+        stderr = io.StringIO()
+        with mock.patch.object(reader.urllib.request, "build_opener", return_value=opener), \
+                mock.patch.object(reader.sys, "__stderr__", stderr):
+            status = reader._post_contract(self.settings, "/api/reader/status", "ReaderStatusHeartbeatV1", {
+                "readerInstanceId": "00000000-0000-0000-0000-000000000001",
+                "accountExternalId": self.settings["accountExternalId"],
+                "state": "Listening",
+                "targetVersion": 3,
+                "listeningTargetCount": 2,
+                "lastErrorCode": None,
+                "startedAtUtc": "2026-10-10T00:00:00Z",
+            })
+        self.assertEqual(status, 200)
+        request, _ = opener.requests[0]
+        self.assertEqual(request.get_method(), "POST")
+        self.assertEqual(request.get_header("Authorization"), "Bearer " + "t" * 40)
+        self.assertEqual(json.loads(request.data.decode("utf-8"))["listeningTargetCount"], 2)
+        self.assertNotIn("text", json.loads(request.data.decode("utf-8")))
+        self.assertNotIn("t" * 40, stderr.getvalue())
+
+    def test_target_sync_checks_account_scope_and_reports_multiple_direct_targets(self) -> None:
+        body = json.dumps({
+            "accountId": "00000000-0000-0000-0000-000000000001",
+            "accountExternalId": "sample-account",
+            "targetVersion": 7,
+            "conversationExternalIds": ["sample-contact", "second-contact"],
+        }).encode("utf-8")
+        opener = RecordingOpener([FakeResponse(200, body)])
+        with mock.patch.object(reader.urllib.request, "build_opener", return_value=opener):
+            targets = reader._get_server_targets(self.settings)
+        self.assertEqual(targets["targetVersion"], 7)
+        self.assertEqual(targets["conversationExternalIds"], ["sample-contact", "second-contact"])
+        request, timeout = opener.requests[0]
+        self.assertEqual(request.get_method(), "GET")
+        self.assertEqual(timeout, 5)
+        self.assertEqual(request.get_header("Authorization"), "Bearer " + "t" * 40)
+
+    def test_reader_claims_only_account_bound_directory_job(self) -> None:
+        job_id = "12345678-1234-4234-8234-123456789012"
+        payload = json.dumps({"job": {
+            "jobId": job_id,
+            "accountExternalId": self.settings["accountExternalId"],
+        }}).encode("utf-8")
+        opener = RecordingOpener([FakeResponse(200, payload)])
+        with mock.patch.object(reader.urllib.request, "build_opener", return_value=opener):
+            job = reader._get_next_discovery_job(self.settings)
+        self.assertEqual(job, {
+            "jobId": job_id,
+            "accountExternalId": self.settings["accountExternalId"],
+        })
+        request, _ = opener.requests[0]
+        self.assertEqual(request.get_method(), "GET")
+        self.assertEqual(request.get_header("Authorization"), "Bearer " + "t" * 40)
+
+    def test_directory_discovery_sends_only_direct_ids_and_display_names(self) -> None:
+        class LocalDirectory:
+            def get_sessions(self, limit: int) -> list[dict[str, object]]:
+                self.asserted_limit = limit
+                return [
+                    {"username": "direct-1", "summary": "private message summary"},
+                    {"username": "room@chatroom", "summary": "group content"},
+                    {"username": "filehelper", "summary": "system content"},
+                ]
+
+            def get_nickname(self, username: str) -> str:
+                return "Contact One" if username == "direct-1" else username
+
+        result = reader._discover_session_directory(LocalDirectory())
+        self.assertEqual(result, [{"conversationExternalId": "direct-1", "displayName": "Contact One"}])
+        self.assertNotIn("summary", json.dumps(result))
 
     def test_wx4_legacy_external_id_matches_golden_fixture_exactly(self) -> None:
         row = {

@@ -6,8 +6,8 @@
   <meta name="color-scheme" content="light" />
   <meta name="theme-color" content="#f5f8f7" />
   <title>知间 · 微信 AI 沟通助手</title>
-  <link rel="stylesheet" href="styles.css?v=20261010-3" />
-  <script defer src="app.js?v=20261010-3"></script>
+  <link rel="stylesheet" href="styles.css?v=20261012-2" />
+  <script defer src="app.js?v=20261012-2"></script>
 </head>
 <body>
   <div id="app" class="app-shell">
@@ -39,7 +39,7 @@
           <button type="button" class="side-link" data-page="connection"><span class="nav-icon" aria-hidden="true">⌁</span>接入与会话</button>
           <button type="button" class="side-link" data-page="memory"><span class="nav-icon" aria-hidden="true">◇</span>记忆与资料</button>
           <span class="side-link is-unavailable" aria-disabled="true"><span class="nav-icon" aria-hidden="true">✳</span>AI 与 Skills <small>待接入</small></span>
-          <span class="side-link is-unavailable" aria-disabled="true"><span class="nav-icon" aria-hidden="true">▤</span>系统状态 <small>待接入</small></span>
+          <button type="button" class="side-link" data-page="status"><span class="nav-icon" aria-hidden="true">▤</span>系统状态</button>
         </nav>
         <div class="sidebar-note">
           <span class="note-mark" aria-hidden="true">i</span>
@@ -61,6 +61,10 @@
         </div>
 
         <div class="chat-page-tools" aria-label="当前会话">
+          <label class="sr-only" for="chatAccountSelect">微信账号</label>
+          <select id="chatAccountSelect" class="field select scope-select" disabled>
+            <option value="">等待授权读取账号</option>
+          </select>
           <div class="chat-selected">
             <div class="session-avatar" aria-hidden="true">知</div>
             <div class="chat-selected-copy">
@@ -71,7 +75,7 @@
           <span id="chatCaptureStatus" class="pill pill-pending">等待授权</span>
           <label class="sr-only" for="chatConversationSelect">当前授权会话</label>
           <select id="chatConversationSelect" class="field select" disabled>
-            <option id="chatConversationOption">等待授权读取</option>
+            <option value="">等待授权读取</option>
           </select>
         </div>
 
@@ -104,13 +108,19 @@
               </div>
               <div id="suggestionList" class="work-choice-list" aria-live="polite"></div>
               <div class="suggestion-controls" aria-label="建议控制项">
+                <label class="sr-only" for="replyProfileSelect">建议执行档位</label>
+                <select id="replyProfileSelect" class="profile-select" disabled aria-describedby="replyProfileHelp">
+                  <option value="Quick">等待服务器档位目录</option>
+                </select>
                 <label class="sr-only" for="personaSelect">人设预设</label>
                 <select id="personaSelect" class="persona-select" disabled aria-describedby="personaHelp">
                   <option>等待服务器人设目录</option>
                 </select>
                 <button id="reloadPersonas" type="button" class="button button-secondary" hidden>重试人设目录</button>
                 <button id="generateSuggestions" type="button" class="button button-soft" disabled>生成三条建议</button>
+                <button id="cancelSuggestion" type="button" class="button button-secondary" hidden>取消生成</button>
                 <span id="personaHelp" class="control-help">人设列表来自服务端配置</span>
+                <span id="replyProfileHelp" class="control-help">档位由服务端控制上下文和历史检索范围</span>
                 <span id="suggestionFeedback" class="suggestion-feedback" role="status" aria-live="polite"></span>
               </div>
             </div>
@@ -135,10 +145,17 @@
               </div>
             </div>
             <form id="consultationForm" class="consult-compose">
+              <div class="consultation-profile-row">
+                <label for="consultationProfileSelect">本轮咨询档位</label>
+                <select id="consultationProfileSelect" class="profile-select" disabled>
+                  <option value="Balanced">等待服务器档位目录</option>
+                </select>
+              </div>
               <label class="sr-only" for="consultQuestion">向 AI 咨询</label>
               <textarea id="consultQuestion" rows="3" disabled maxlength="4000" placeholder="输入希望咨询的问题"></textarea>
               <div class="agent-send-bar">
                 <span id="consultationHint">仅提交给 AI 咨询，不会发送微信消息</span>
+                <button id="cancelConsultation" type="button" class="button button-secondary" hidden>取消咨询</button>
                 <button id="consultSubmit" type="submit" class="button button-soft" disabled>提交给 AI</button>
               </div>
               <p id="consultationNotice" class="consultation-notice" role="status" aria-live="polite">请先在“接入与会话”完成授权读取。</p>
@@ -152,7 +169,7 @@
             <div>
               <div class="eyebrow">ACCOUNT & CONVERSATION</div>
               <h1 id="connectionPageTitle">接入与会话</h1>
-              <p>显示服务端配置的当前授权会话与采集状态。此页不选择或更改采集目标。</p>
+              <p>选择已导入账号与会话。查看会话和订阅 Reader 监听目标是分开的操作。</p>
             </div>
           </div>
 
@@ -168,17 +185,48 @@
             <section class="session-bar" aria-label="服务器当前授权会话">
               <div class="session-avatar" aria-hidden="true">知</div>
               <div class="session-meta">
-                <span class="session-title">当前授权会话</span>
-                <span id="currentSessionValue" class="session-value">等待授权读取当前会话</span>
+                <span class="session-title">当前账号与会话</span>
+                <span id="currentSessionValue" class="session-value">等待授权读取</span>
               </div>
               <span id="currentSessionStatus" class="pill pill-pending"><span class="pill-dot" aria-hidden="true"></span>等待授权</span>
+              <label class="sr-only" for="accountSelect">微信账号</label>
+              <select id="accountSelect" class="field select scope-select" disabled>
+                <option value="">等待授权读取账号</option>
+              </select>
               <label class="sr-only" for="conversationSelect">当前服务端会话</label>
               <select id="conversationSelect" class="conversation-select" disabled aria-describedby="selectionHelp">
-                <option id="conversationOption">等待授权读取</option>
+                <option value="">等待授权读取</option>
               </select>
-              <span id="selectionHelp" class="sr-only">会话范围由服务器配置，页面不能更改。</span>
+              <span id="selectionHelp" class="sr-only">会话列表来自已导入的 Direct 会话；读取时服务端验证账号与会话关系。</span>
             </section>
           </div>
+
+          <section class="status-card reader-directory-card" aria-labelledby="readerDirectoryTitle">
+            <div class="status-card-heading">
+              <span class="status-icon" aria-hidden="true">⌕</span>
+              <div><p class="eyebrow">LOCAL DIRECTORY</p><h2 id="readerDirectoryTitle">发现本机 Direct 会话</h2></div>
+            </div>
+            <p class="status-note">仅在你点击后读取当前活动微信账号的会话目录，保存会话 ID 和显示名；不会上传消息摘要或聊天正文。</p>
+            <div class="reader-directory-actions">
+              <button id="discoverReaderSessions" type="button" class="button button-secondary" disabled>扫描本机会话目录</button>
+              <span id="discoveryStatus" role="status" aria-live="polite">等待 Web 授权</span>
+            </div>
+          </section>
+
+          <section class="status-card reader-targets-card" aria-labelledby="readerTargetsTitle">
+            <div class="status-card-heading">
+              <span class="status-icon" aria-hidden="true">✓</span>
+              <div><p class="eyebrow">READER TARGETS</p><h2 id="readerTargetsTitle">后台监听会话</h2></div>
+              <button id="saveReaderTargets" type="button" class="button button-soft" disabled>保存监听目标</button>
+            </div>
+            <p class="status-note">这些目标独立于当前查看会话；最多同时选择 20 个 Direct 会话。状态以 Reader 心跳为准。</p>
+            <label class="sr-only" for="readerTargetSearch">筛选会话目录</label>
+            <input id="readerTargetSearch" class="reader-target-search" type="search" autocomplete="off" placeholder="搜索已发现的会话" disabled />
+            <div id="readerTargetList" class="reader-target-list" role="group" aria-label="选择后台监听会话">
+              <span class="directory-empty">授权后读取已导入会话。</span>
+            </div>
+            <p id="readerTargetStatus" class="reader-target-feedback" role="status" aria-live="polite"></p>
+          </section>
 
           <section class="status-card capture-card" aria-labelledby="captureStateTitle">
             <div class="status-card-heading">
@@ -188,7 +236,7 @@
             <dl class="status-list">
               <div><dt>服务器返回状态</dt><dd id="captureStateValue">等待授权读取</dd></div>
             </dl>
-            <p class="status-note">页面只显示当前授权目标的状态；切换页面或预览身份不会更改采集目标。</p>
+            <p class="status-note">当前版本尚未接入 Reader 心跳时，实时采集状态会显示为未知；选择会话不会改变监听目标。</p>
           </section>
 
           <details id="perspective" class="identity-preview">
@@ -198,15 +246,15 @@
               <span id="perspectiveStatus" class="identity-summary-status">等待授权</span>
             </summary>
             <div class="identity-content">
-              <p id="identityHelp">授权读取后展示当前会话的身份范围。交换预览只改变页面标签；只有点击确认按钮并确认摘要后才会提交校准。</p>
+              <p id="identityHelp">授权读取后展示当前会话的身份范围。待确认时可确认当前预览，也可互换两方后再确认。</p>
               <div class="identity-pair" aria-live="polite">
                 <div class="identity-side"><span>本人预览</span><strong data-identity="self">等待授权读取</strong></div>
                 <span class="identity-arrows" aria-hidden="true">⇄</span>
                 <div class="identity-side"><span>联系人预览</span><strong data-identity="contact">等待授权读取</strong></div>
               </div>
               <div class="identity-actions">
-                <button type="button" class="button button-secondary" id="swapPreview" disabled>交换预览候选</button>
-                <button type="button" class="button button-soft" id="confirmPerspective" disabled>确认身份校准</button>
+                <button type="button" class="button button-soft" id="confirmCurrent" hidden disabled>确认当前方向</button>
+                <button type="button" class="button button-secondary" id="swapPreview" disabled>互换并确认</button>
                 <span id="previewState" class="local-only-label">尚无可比较身份候选</span>
               </div>
               <div id="confirmHelp" class="confirm-help" role="status">需先读取到唯一且可比较的身份范围。</div>
@@ -279,6 +327,35 @@
             </div>
           </div>
         </section>
+        </section>
+
+        <section id="statusPage" class="workspace-page status-page" aria-labelledby="statusPageTitle" hidden>
+          <div class="page-heading">
+            <div>
+              <div class="eyebrow">SYSTEM STATUS</div>
+              <h1 id="statusPageTitle">系统状态</h1>
+              <p>查看 API、数据库、Reader 和最近 AI 任务的状态。此页只显示运行元数据，不显示聊天正文、账号 ID 或令牌。</p>
+            </div>
+            <button id="refreshSystemStatus" type="button" class="button button-soft" disabled>刷新状态</button>
+          </div>
+
+          <div id="systemStatusFeedback" class="status-feedback" role="status" aria-live="polite">请先在“接入与会话”完成授权。</div>
+          <div class="system-status-grid" aria-label="服务状态">
+            <article class="status-card system-status-card"><div class="status-card-heading"><span class="status-icon">⌁</span><div><p class="eyebrow">API</p><h2>服务进程</h2></div></div><strong id="apiHealthValue" class="system-status-value">等待读取</strong><p id="apiHealthDetail" class="status-note">等待授权读取健康状态。</p></article>
+            <article class="status-card system-status-card"><div class="status-card-heading"><span class="status-icon">▦</span><div><p class="eyebrow">DATABASE</p><h2>PostgreSQL</h2></div></div><strong id="databaseHealthValue" class="system-status-value">等待读取</strong><p id="databaseHealthDetail" class="status-note">数据库状态未知。</p></article>
+            <article class="status-card system-status-card"><div class="status-card-heading"><span class="status-icon">✳</span><div><p class="eyebrow">AI RUNTIME</p><h2>AI 运行配置</h2></div></div><strong id="agentRuntimeValue" class="system-status-value">等待读取</strong><p id="agentRuntimeDetail" class="status-note">运行方式未知。</p></article>
+          </div>
+
+          <section class="status-card system-status-section" aria-labelledby="readerStatusTitle">
+            <div class="status-card-heading"><span class="status-icon">⌕</span><div><p class="eyebrow">WECHAT READER</p><h2 id="readerStatusTitle">本机读取器</h2></div></div>
+            <div id="readerStatusList" class="system-status-list"><p class="system-status-empty">等待读取 Reader 心跳。</p></div>
+          </section>
+
+          <div class="system-status-grid system-status-grid-secondary">
+            <article class="status-card system-status-card"><div class="status-card-heading"><span class="status-icon">◷</span><div><p class="eyebrow">LATEST AGENT RUN</p><h2>最近 AI 任务</h2></div></div><strong id="agentRunValue" class="system-status-value">等待读取</strong><p id="agentRunDetail" class="status-note">运行记录状态未知。</p></article>
+            <article class="status-card system-status-card"><div class="status-card-heading"><span class="status-icon">◇</span><div><p class="eyebrow">MEMORY</p><h2>自动记忆配置</h2></div></div><strong id="memoryRuntimeValue" class="system-status-value">等待读取</strong><p id="memoryRuntimeDetail" class="status-note">仅显示是否选用了生成运行时，不代表已经成功沉淀。</p></article>
+            <article class="status-card system-status-card"><div class="status-card-heading"><span class="status-icon">⇧</span><div><p class="eyebrow">HISTORY JOBS</p><h2>历史补录任务</h2></div></div><strong id="historyJobsValue" class="system-status-value">等待读取</strong><p id="historyJobsDetail" class="status-note">历史补录任务进度目前没有产品接口。</p></article>
+          </div>
         </section>
       </main>
     </div>

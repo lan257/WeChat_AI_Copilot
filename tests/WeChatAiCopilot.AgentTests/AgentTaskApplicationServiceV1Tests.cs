@@ -289,10 +289,10 @@ public sealed class AgentTaskApplicationServiceV1Tests
     public void WebRequestBodies_DoNotExposeConversationScopeFields()
     {
         Assert.Equal(
-            new[] { "PersonaPresetId", "PreviousBatchId" },
+            new[] { "ExecutionProfileId", "PersonaPresetId", "PreviousBatchId" },
             typeof(CreateAgentSuggestionsRequestV1).GetProperties().Select(property => property.Name).OrderBy(name => name).ToArray());
         Assert.Equal(
-            new[] { "UserInput" },
+            new[] { "UserInput", "ExecutionProfileId" },
             typeof(CreateAgentConsultationTurnRequestV1).GetProperties().Select(property => property.Name).ToArray());
     }
 

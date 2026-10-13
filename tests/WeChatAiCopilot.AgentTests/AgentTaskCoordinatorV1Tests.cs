@@ -116,6 +116,33 @@ public sealed class AgentTaskCoordinatorV1Tests
         Assert.Equal(0, repository.StartedRun.BudgetMetadata.MaxToolCalls);
     }
 
+    [Theory]
+    [InlineData(AgentExecutionProfileIdV1.Quick, 15, false)]
+    [InlineData(AgentExecutionProfileIdV1.Balanced, 40, true)]
+    [InlineData(AgentExecutionProfileIdV1.Deep, 80, true)]
+    [InlineData(AgentExecutionProfileIdV1.Max, 100, true)]
+    public async Task CreateSuggestionsAsync_UsesServerOwnedExecutionProfilePolicy(
+        AgentExecutionProfileIdV1 profileId,
+        int recentMessageLimit,
+        bool includeMemory)
+    {
+        var contextService = new FakeContextService(CreateContextBundle());
+        var runtime = new CapturingRuntime(AgentRuntimeResultV1.CompletedSuggestions("test-runtime", CreateDrafts()));
+        var repository = new FakeAgentRepository();
+        var coordinator = CreateCoordinator(contextService, runtime, repository);
+
+        await coordinator.CreateSuggestionsAsync(CreateReplyTask() with { ExecutionProfileId = profileId }, Scope);
+
+        Assert.Equal(recentMessageLimit, contextService.LastRequest!.RecentMessageLimit);
+        Assert.Equal(includeMemory, contextService.LastRequest.IncludeMemory);
+        Assert.Equal(profileId, runtime.LastRequest!.Task!.ExecutionProfileId);
+        Assert.Equal(profileId, repository.StartedRun!.ExecutionProfileId);
+        Assert.Equal(profileId, repository.StartedRun.BudgetMetadata!.ExecutionProfileId);
+        Assert.Equal(recentMessageLimit, repository.StartedRun.BudgetMetadata.RecentMessageLimit);
+        Assert.Equal(includeMemory, repository.StartedRun.BudgetMetadata.IncludeMemory);
+        Assert.Equal(0, runtime.LastRequest.Budget!.MaxToolCalls);
+    }
+
     [Fact]
     public async Task CreateConsultationTurnAsync_BindsOutputToAuthorizedThreadAndContextRevision()
     {

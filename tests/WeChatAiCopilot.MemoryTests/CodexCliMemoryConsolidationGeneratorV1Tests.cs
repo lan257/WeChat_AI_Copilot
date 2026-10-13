@@ -297,7 +297,8 @@ public sealed class CodexCliMemoryConsolidationGeneratorV1Tests
             string prompt,
             string outputSchemaJson,
             TimeSpan timeout,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            string? modelId = null)
         {
             CallCount++;
             LastPrompt = prompt;

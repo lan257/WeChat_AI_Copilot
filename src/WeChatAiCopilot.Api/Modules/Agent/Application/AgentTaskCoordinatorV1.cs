@@ -40,7 +40,8 @@ public sealed class AgentTaskCoordinatorV1 : IAgentTaskCoordinatorV1
         ValidateOptions(options);
         _options = options with
         {
-            AllowedReadCapabilities = options.AllowedReadCapabilities.ToArray()
+            AllowedReadCapabilities = options.AllowedReadCapabilities.ToArray(),
+            ProfileModelIds = new Dictionary<AgentExecutionProfileIdV1, string>(options.ProfileModelIds)
         };
         _timeProvider = timeProvider ?? TimeProvider.System;
     }
@@ -86,6 +87,7 @@ public sealed class AgentTaskCoordinatorV1 : IAgentTaskCoordinatorV1
         {
             RunId = runId,
             TaskType = AgentTaskTypeV1.ReplyCandidates,
+            ExecutionProfileId = runtimeTask.ExecutionProfileId,
             AccountId = authorizedScope.AccountId,
             ConversationId = authorizedScope.ConversationId,
             PersonaPresetId = runtimeTask.PersonaPresetId,
@@ -365,6 +367,7 @@ public sealed class AgentTaskCoordinatorV1 : IAgentTaskCoordinatorV1
         bool consultationHistoryTruncated,
         CancellationToken cancellationToken)
     {
+        var executionPolicy = ResolveExecutionPolicy(scopedTask.ExecutionProfileId);
         ContextBundleV1 contextBundle;
         try
         {
@@ -374,8 +377,8 @@ public sealed class AgentTaskCoordinatorV1 : IAgentTaskCoordinatorV1
                     AccountId = authorizedScope.AccountId,
                     ConversationId = authorizedScope.ConversationId,
                     RequestPurpose = scopedTask.TaskType.ToString(),
-                    RecentMessageLimit = _options.RecentMessageLimit,
-                    IncludeMemory = _options.IncludeMemory
+                    RecentMessageLimit = executionPolicy.RecentMessageLimit,
+                    IncludeMemory = executionPolicy.IncludeMemory
                 },
                 authorizedScope,
                 cancellationToken).ConfigureAwait(false);
@@ -397,11 +400,12 @@ public sealed class AgentTaskCoordinatorV1 : IAgentTaskCoordinatorV1
         }
 
         ValidateContextScope(contextBundle, authorizedScope);
-        var context = MapContext(contextBundle);
+        var context = MapContext(contextBundle, executionPolicy);
         var task = scopedTask with { ContextRevision = context.ContextRevision };
         var request = new ScopedAgentRequestV1
         {
             Task = task,
+            ModelId = executionPolicy.ModelId,
             Context = context,
             BoundThread = boundThread,
             ContextToolSession = _contextToolSessionFactory?.Bind(authorizedScope),
@@ -409,8 +413,8 @@ public sealed class AgentTaskCoordinatorV1 : IAgentTaskCoordinatorV1
             ConsultationHistoryTruncated = consultationHistoryTruncated,
             PersonaInstruction = personaInstruction,
             SkillVersion = _options.SkillVersion,
-            AllowedReadCapabilities = _options.AllowedReadCapabilities,
-            Budget = _options.Budget
+            AllowedReadCapabilities = executionPolicy.AllowedReadCapabilities,
+            Budget = executionPolicy.Budget
         };
 
         var requestViolations = AgentContractValidatorV1.Validate(request);
@@ -422,7 +426,7 @@ public sealed class AgentTaskCoordinatorV1 : IAgentTaskCoordinatorV1
         var runId = NewId();
         var runtimeName = SanitizeRuntimeName(_runtime.GetType().Name, "configured-runtime");
         var startedAt = _timeProvider.GetUtcNow();
-        long? maxDurationMilliseconds = _options.Budget!.MaxDuration is { } maxDuration
+        long? maxDurationMilliseconds = executionPolicy.Budget.MaxDuration is { } maxDuration
             ? (long?)checked((long)Math.Ceiling(maxDuration.TotalMilliseconds))
             : null;
         await _repository.StartAgentRunAsync(
@@ -431,6 +435,7 @@ public sealed class AgentTaskCoordinatorV1 : IAgentTaskCoordinatorV1
             {
                 RunId = runId,
                 TaskType = task.TaskType,
+                ExecutionProfileId = task.ExecutionProfileId,
                 AccountId = authorizedScope.AccountId,
                 ConversationId = authorizedScope.ConversationId,
                 RuntimeName = runtimeName,
@@ -440,9 +445,13 @@ public sealed class AgentTaskCoordinatorV1 : IAgentTaskCoordinatorV1
                 StartedAtUtc = startedAt,
                 BudgetMetadata = new AgentRunBudgetMetadataV1
                 {
+                    ExecutionProfileId = task.ExecutionProfileId,
+                    ModelId = executionPolicy.ModelId,
+                    RecentMessageLimit = executionPolicy.RecentMessageLimit,
+                    IncludeMemory = executionPolicy.IncludeMemory,
                     MaxDurationMilliseconds = maxDurationMilliseconds,
-                    MaxContextCharacters = _options.Budget.MaxContextCharacters,
-                    MaxToolCalls = _options.Budget.MaxToolCalls
+                    MaxContextCharacters = executionPolicy.Budget.MaxContextCharacters,
+                    MaxToolCalls = executionPolicy.Budget.MaxToolCalls
                 }
             },
             cancellationToken).ConfigureAwait(false);
@@ -565,7 +574,7 @@ public sealed class AgentTaskCoordinatorV1 : IAgentTaskCoordinatorV1
                 ? runtimeName
                 : fallback;
 
-    private AgentContextSnapshotV1 MapContext(ContextBundleV1 bundle)
+    private AgentContextSnapshotV1 MapContext(ContextBundleV1 bundle, AgentExecutionPolicyV1 executionPolicy)
     {
         var canUsePerspectiveBoundData = bundle.PerspectiveState == PerspectiveStateV1.Confirmed;
         ParticipantProfileSnapshotV1[] profiles = canUsePerspectiveBoundData
@@ -604,8 +613,8 @@ public sealed class AgentTaskCoordinatorV1 : IAgentTaskCoordinatorV1
             CalibrationVersion = bundle.CalibrationVersion,
             ProfileStatus = bundle.ProfileStatus,
             UnprofiledTextCharacters = bundle.UnprofiledTextCharacters,
-            RecentMessageLimit = _options.RecentMessageLimit,
-            IncludeMemory = _options.IncludeMemory,
+            RecentMessageLimit = executionPolicy.RecentMessageLimit,
+            IncludeMemory = executionPolicy.IncludeMemory,
             RecentMessages = bundle.RecentMessages.Select(message => new AgentContextMessageV1
             {
                 MessageId = message.MessageId.ToString("D"),
@@ -641,6 +650,50 @@ public sealed class AgentTaskCoordinatorV1 : IAgentTaskCoordinatorV1
             Omissions = bundle.Omissions.Select(omission => omission.Code.ToString()).ToArray()
         };
     }
+
+    private AgentExecutionPolicyV1 ResolveExecutionPolicy(AgentExecutionProfileIdV1 profileId)
+    {
+        var profile = AgentExecutionProfilesV1.Get(profileId);
+        var configuredBudget = _options.Budget!;
+        var profileContextLimit = profileId switch
+        {
+            AgentExecutionProfileIdV1.Quick => 8_000,
+            AgentExecutionProfileIdV1.Balanced => 16_000,
+            AgentExecutionProfileIdV1.Deep => 24_000,
+            AgentExecutionProfileIdV1.Max => 32_000,
+            _ => 16_000
+        };
+        int? contextLimit = configuredBudget.MaxContextCharacters is { } configuredContextLimit
+            ? Math.Min(configuredContextLimit, profileContextLimit)
+            : profileContextLimit;
+        int? toolLimit = configuredBudget.MaxToolCalls is { } configuredToolLimit
+            ? Math.Min(configuredToolLimit, profile.MaximumHistorySearches)
+            : profile.MaximumHistorySearches;
+        var allowedCapabilities = profile.MaximumHistorySearches == 0
+            ? Array.Empty<AgentReadCapabilityV1>()
+            : _options.AllowedReadCapabilities.ToArray();
+
+        return new AgentExecutionPolicyV1(
+            profile.RecentMessageLimit,
+            profile.IncludeMemory,
+            allowedCapabilities,
+            new AgentExecutionBudgetV1
+            {
+                MaxDuration = configuredBudget.MaxDuration,
+                MaxContextCharacters = contextLimit,
+                MaxToolCalls = toolLimit
+            },
+            _options.ProfileModelIds.TryGetValue(profileId, out var modelId) ? modelId : null,
+            profile.ReviewSuggestions);
+    }
+
+    private sealed record AgentExecutionPolicyV1(
+        int RecentMessageLimit,
+        bool IncludeMemory,
+        IReadOnlyList<AgentReadCapabilityV1> AllowedReadCapabilities,
+        AgentExecutionBudgetV1 Budget,
+        string? ModelId,
+        bool ReviewSuggestions);
 
     private static void ValidateAuthorizedScope(AuthorizedContextScopeV1 scope)
     {
@@ -712,6 +765,15 @@ public sealed class AgentTaskCoordinatorV1 : IAgentTaskCoordinatorV1
             throw new ArgumentException("Read capabilities must be supported and unique.", nameof(options));
         }
 
+        ArgumentNullException.ThrowIfNull(options.ProfileModelIds);
+        if (options.ProfileModelIds.Any(pair => !Enum.IsDefined(pair.Key)
+                || string.IsNullOrWhiteSpace(pair.Value)
+                || pair.Value.Length > 80
+                || pair.Value.Any(character => !char.IsAsciiLetterOrDigit(character) && character is not '-' and not '_' and not '.')))
+        {
+            throw new ArgumentException("Execution profile model IDs must use the restricted model identifier format.", nameof(options));
+        }
+
         ArgumentNullException.ThrowIfNull(options.Budget);
         if (options.Budget.MaxDuration is { } duration && duration <= TimeSpan.Zero
             || options.Budget.MaxContextCharacters is < 0
@@ -737,6 +799,7 @@ public sealed record AgentTaskCoordinatorOptionsV1
 {
     public string SkillVersion { get; init; } = string.Empty;
     public IReadOnlyList<AgentReadCapabilityV1> AllowedReadCapabilities { get; init; } = [];
+    public IReadOnlyDictionary<AgentExecutionProfileIdV1, string> ProfileModelIds { get; init; } = new Dictionary<AgentExecutionProfileIdV1, string>();
     public AgentExecutionBudgetV1? Budget { get; init; }
     public int RecentMessageLimit { get; init; } = 30;
     public bool IncludeMemory { get; init; } = true;

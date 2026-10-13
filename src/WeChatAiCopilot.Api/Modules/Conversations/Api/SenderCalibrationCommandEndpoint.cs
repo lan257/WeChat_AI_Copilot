@@ -30,15 +30,6 @@ public static class SenderCalibrationCommandEndpoint
                 "DATABASE_NOT_CONFIGURED", "The formal message store is not configured.", retryable: true);
         }
 
-        var provider = configuration["Web:Provider"] ?? "local-wechat";
-        var accountExternalId = configuration["Web:AllowedAccountExternalId"];
-        var conversationExternalId = configuration["Web:AllowedConversationExternalId"];
-        if (string.IsNullOrWhiteSpace(accountExternalId) || string.IsNullOrWhiteSpace(conversationExternalId))
-        {
-            return Error(context, StatusCodes.Status503ServiceUnavailable,
-                "WEB_SCOPE_NOT_CONFIGURED", "The authorized Web account and conversation are not configured.", retryable: false);
-        }
-
         var idempotencyKey = context.Request.Headers["Idempotency-Key"].ToString();
         if (string.IsNullOrWhiteSpace(idempotencyKey) || idempotencyKey.Length > 200)
         {
@@ -71,12 +62,19 @@ public static class SenderCalibrationCommandEndpoint
                 retryable: false);
         }
 
-        var target = await FindAuthorizedTargetAsync(
-            dataSource,
-            provider,
-            accountExternalId,
-            conversationExternalId,
-            cancellationToken);
+        WebConversationTargetResolutionV1 targetResolution;
+        try
+        {
+            targetResolution = await WebConversationScopeResolverV1.ResolveAsync(
+                context, configuration, dataSource, cancellationToken);
+        }
+        catch (NpgsqlException)
+        {
+            return Error(context, StatusCodes.Status503ServiceUnavailable,
+                "DATABASE_UNAVAILABLE", "The formal message store is unavailable.", retryable: true);
+        }
+        if (targetResolution.Error is not null) return targetResolution.Error;
+        var target = await FindAuthorizedTargetAsync(dataSource, targetResolution.Target!, cancellationToken);
         if (target is null)
         {
             return Error(context, StatusCodes.Status404NotFound,
@@ -112,9 +110,7 @@ public static class SenderCalibrationCommandEndpoint
 
     private static async Task<AuthorizedTarget?> FindAuthorizedTargetAsync(
         NpgsqlDataSource dataSource,
-        string provider,
-        string accountExternalId,
-        string conversationExternalId,
+        WebConversationTarget target,
         CancellationToken cancellationToken)
     {
         const string sql = """
@@ -128,9 +124,9 @@ public static class SenderCalibrationCommandEndpoint
             """;
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var command = new NpgsqlCommand(sql, connection);
-        command.Parameters.AddWithValue("provider", provider);
-        command.Parameters.AddWithValue("account_external_id", accountExternalId);
-        command.Parameters.AddWithValue("conversation_external_id", conversationExternalId);
+        command.Parameters.AddWithValue("provider", target.Provider);
+        command.Parameters.AddWithValue("account_external_id", target.AccountExternalId);
+        command.Parameters.AddWithValue("conversation_external_id", target.ConversationExternalId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken)
             ? new AuthorizedTarget(reader.GetGuid(0), reader.GetGuid(1))

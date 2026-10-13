@@ -37,7 +37,8 @@ public interface IAgentTaskApplicationServiceV1
         AuthorizedContextScopeV1 scope,
         Guid threadId,
         string userInput,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        AgentExecutionProfileIdV1 executionProfileId = AgentExecutionProfileIdV1.Balanced);
 }
 
 public sealed record AgentWebConversationTargetV1(
@@ -48,6 +49,7 @@ public sealed record AgentWebConversationTargetV1(
 public sealed record CreateAgentSuggestionsRequestV1
 {
     public string? PersonaPresetId { get; init; }
+    public AgentExecutionProfileIdV1 ExecutionProfileId { get; init; } = AgentExecutionProfileIdV1.Quick;
     public Guid? PreviousBatchId { get; init; }
 }
 

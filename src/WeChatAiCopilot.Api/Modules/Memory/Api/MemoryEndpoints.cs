@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using Npgsql;
 using WeChatAiCopilot.Api.Contracts.V1;
+using WeChatAiCopilot.Api.Modules.Conversations.Api;
 using WeChatAiCopilot.Api.Modules.Memory.Application;
 using WeChatAiCopilot.Api.Modules.Memory.Contracts;
 using WeChatAiCopilot.Api.Platform.Authentication;
@@ -217,26 +218,17 @@ public static class MemoryEndpoints
             return new ScopeResolution(null, null, DatabaseNotConfigured(context));
         }
 
-        var accountExternalId = configuration["Web:AllowedAccountExternalId"];
-        var conversationExternalId = configuration["Web:AllowedConversationExternalId"];
-        if (string.IsNullOrWhiteSpace(accountExternalId)
-            || string.IsNullOrWhiteSpace(conversationExternalId))
-        {
-            return new ScopeResolution(null, null, Error(
-                context,
-                StatusCodes.Status503ServiceUnavailable,
-                "WEB_SCOPE_NOT_CONFIGURED",
-                "The authorized Web account and conversation are not configured.",
-                retryable: false));
-        }
-
-        var service = new PostgresMemoryServiceV1(dataSource);
         try
         {
+            var resolution = await WebConversationScopeResolverV1.ResolveAsync(
+                context, configuration, dataSource, cancellationToken);
+            if (resolution.Error is not null) return new ScopeResolution(null, null, resolution.Error);
+            var target = resolution.Target!;
+            var service = new PostgresMemoryServiceV1(dataSource);
             var scope = await service.ResolveConfiguredConversationAsync(
-                configuration["Web:Provider"] ?? "local-wechat",
-                accountExternalId,
-                conversationExternalId,
+                target.Provider,
+                target.AccountExternalId,
+                target.ConversationExternalId,
                 cancellationToken);
             return scope is null
                 ? new ScopeResolution(null, null, MemoryNotFound(context))

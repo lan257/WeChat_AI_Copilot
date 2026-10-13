@@ -58,9 +58,34 @@ public sealed class AgentPersonasEndpointTests
         Assert.Empty(document.RootElement.GetProperty("personas").EnumerateArray());
     }
 
+    [Fact]
+    public async Task GetExecutionProfiles_RequiresWebBearerAndReturnsServerOwnedProfiles()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Authentication:WebBearerToken"] = "test-token"
+            })
+            .Build();
+
+        var unauthorized = await InvokeEndpointAsync(configuration, token: null, "/api/ai/execution-profiles");
+        Assert.Equal(StatusCodes.Status401Unauthorized, unauthorized.StatusCode);
+
+        var authorized = await InvokeEndpointAsync(configuration, "test-token", "/api/ai/execution-profiles");
+        Assert.Equal(StatusCodes.Status200OK, authorized.StatusCode);
+        using var document = JsonDocument.Parse(authorized.Body);
+        var profiles = document.RootElement.GetProperty("profiles");
+        Assert.Equal(4, profiles.GetArrayLength());
+        Assert.Equal(new[] { "Quick", "Balanced", "Deep", "Max" }, profiles.EnumerateArray()
+            .Select(profile => profile.GetProperty("executionProfileId").GetString()).ToArray());
+        Assert.True(profiles[0].GetProperty("recentMessageLimit").GetInt32() < profiles[3].GetProperty("recentMessageLimit").GetInt32());
+        Assert.True(profiles[3].GetProperty("reviewSuggestions").GetBoolean());
+    }
+
     private static async Task<(int StatusCode, string Body)> InvokeEndpointAsync(
         IConfiguration configuration,
-        string? token)
+        string? token,
+        string route = "/api/ai/personas")
     {
         var builder = WebApplication.CreateBuilder();
         builder.Configuration.AddInMemoryCollection(configuration.AsEnumerable());
@@ -72,13 +97,13 @@ public sealed class AgentPersonasEndpointTests
         var endpoint = routeBuilder.DataSources
             .SelectMany(source => source.Endpoints)
             .OfType<RouteEndpoint>()
-            .Single(candidate => candidate.RoutePattern.RawText == "/api/ai/personas");
+            .Single(candidate => candidate.RoutePattern.RawText == route);
         var context = new DefaultHttpContext
         {
             RequestServices = app.Services
         };
         context.Request.Method = HttpMethods.Get;
-        context.Request.Path = "/api/ai/personas";
+        context.Request.Path = route;
         if (token is not null)
         {
             context.Request.Headers.Authorization = $"Bearer {token}";

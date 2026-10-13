@@ -15,6 +15,10 @@ public static class AgentContractValidatorV1
         }
 
         var violations = new List<AgentContractViolationV1>();
+        if (!Enum.IsDefined(task.ExecutionProfileId))
+        {
+            violations.Add(new("INVALID_EXECUTION_PROFILE", "executionProfileId", "The execution profile is not supported."));
+        }
         if (!Enum.IsDefined(task.TaskType))
         {
             violations.Add(new("INVALID_TASK_TYPE", "taskType", "The task type is not supported."));
@@ -181,7 +185,10 @@ public static class AgentContractValidatorV1
             }
 
             Require(message.MessageId, $"context.recentMessages[{index}].messageId", violations);
-            if (message.Text is null)
+            // Non-text WeChat messages have no text_content by design. Require text
+            // only for text messages, while retaining non-text message metadata in context.
+            if (string.Equals(message.MessageType, "Text", StringComparison.Ordinal)
+                && message.Text is null)
             {
                 violations.Add(new("CONTEXT_MESSAGE_TEXT_REQUIRED", $"context.recentMessages[{index}].text", "Context message text is required."));
             }
@@ -402,6 +409,11 @@ public static class AgentContractValidatorV1
             violations.Add(new("INVALID_SUGGESTION_TASK_TYPE", "taskType", "Suggestion batches must belong to ReplyCandidates tasks."));
         }
 
+        if (!Enum.IsDefined(batch.ExecutionProfileId))
+        {
+            violations.Add(new("INVALID_EXECUTION_PROFILE", "executionProfileId", "The execution profile is not supported."));
+        }
+
         if (batch.Status != AgentRunStatusV1.Completed)
         {
             violations.Add(new("SUGGESTION_BATCH_NOT_COMPLETED", "status", "Only completed suggestion batches may be returned."));
@@ -434,6 +446,7 @@ public static class AgentContractValidatorV1
             || batch.TaskType != task.TaskType
             || batch.AccountId != task.AccountId
             || batch.ConversationId != task.ConversationId
+            || batch.ExecutionProfileId != task.ExecutionProfileId
             || !string.Equals(batch.ContextRevision, task.ContextRevision, StringComparison.Ordinal)
             || !string.Equals(batch.PersonaPresetId, task.PersonaPresetId, StringComparison.Ordinal))
         {

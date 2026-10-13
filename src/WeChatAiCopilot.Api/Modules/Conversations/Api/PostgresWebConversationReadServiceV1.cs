@@ -15,9 +15,7 @@ internal sealed record WebConversationTarget(
     string ConversationExternalId);
 
 /// <summary>
-/// Read-only access to the single account/conversation configured for the Web client.
-/// The caller supplies only server configuration; request values never select a wider
-/// account or conversation scope.
+/// Read-only access to an account/conversation resolved by the Web API scope resolver.
 /// </summary>
 internal sealed class PostgresWebConversationReadServiceV1(NpgsqlDataSource dataSource)
 {
@@ -62,7 +60,7 @@ internal sealed class PostgresWebConversationReadServiceV1(NpgsqlDataSource data
             PerspectiveState = onlyScope?.PerspectiveState ?? PerspectiveStateV1.Unresolved,
             EffectiveSelfRawSenderId = onlyScope?.EffectiveSelfRawSenderId,
             PerspectiveEvidence = onlyScope?.Evidence,
-            CaptureState = "Inactive"
+            CaptureState = conversation.CaptureState
         };
     }
 
@@ -143,13 +141,28 @@ internal sealed class PostgresWebConversationReadServiceV1(NpgsqlDataSource data
                    contact.display_name,
                    conversation.conversation_type,
                    conversation.last_message_cursor,
-                   conversation.message_set_revision
+                   conversation.message_set_revision,
+                   CASE
+                       WHEN target.conversation_id IS NULL THEN 'NotMonitored'
+                       WHEN reader_status.account_id IS NULL THEN 'Unknown'
+                       WHEN reader_status.heartbeat_at < now() - interval '20 seconds' THEN 'Offline'
+                       WHEN reader_status.state = 'Error' THEN 'Error'
+                       WHEN reader_status.target_version <> COALESCE(target_set.target_version, 0) THEN 'Starting'
+                       ELSE reader_status.state
+                   END AS capture_state
             FROM copilot.chat_accounts AS account
             JOIN copilot.conversations AS conversation
               ON conversation.account_id = account.id
             JOIN copilot.contacts AS contact
               ON contact.id = conversation.contact_id
              AND contact.account_id = conversation.account_id
+            LEFT JOIN copilot.monitored_conversation_targets AS target
+              ON target.account_id = conversation.account_id
+             AND target.conversation_id = conversation.id
+            LEFT JOIN copilot.reader_target_sets AS target_set
+              ON target_set.account_id = conversation.account_id
+            LEFT JOIN copilot.reader_status AS reader_status
+              ON reader_status.account_id = conversation.account_id
             WHERE account.provider = @provider
               AND account.external_account_id = @account_external_id
               AND conversation.external_conversation_id = @conversation_external_id;
@@ -170,7 +183,8 @@ internal sealed class PostgresWebConversationReadServiceV1(NpgsqlDataSource data
             reader.IsDBNull(2) ? null : reader.GetString(2),
             reader.GetString(3),
             reader.IsDBNull(4) ? null : reader.GetString(4),
-            reader.GetInt64(5));
+            reader.GetInt64(5),
+            reader.GetString(6));
     }
 
     private static async Task<IReadOnlyList<SenderPerspectiveScopeViewV1>> ReadPerspectiveScopesAsync(
@@ -345,5 +359,6 @@ internal sealed class PostgresWebConversationReadServiceV1(NpgsqlDataSource data
         string? DisplayName,
         string ConversationType,
         string? LastMessageCursor,
-        long MessageSetRevision);
+        long MessageSetRevision,
+        string CaptureState);
 }

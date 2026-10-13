@@ -35,11 +35,10 @@ public static class ConversationEndpoints
 
         var allowedProvider = configuration["Reader:Provider"] ?? "local-wechat";
         var allowedAccount = configuration["Reader:AllowedAccountExternalId"];
-        var allowedConversation = configuration["Reader:AllowedConversationExternalId"];
-        if (string.IsNullOrWhiteSpace(allowedAccount) || string.IsNullOrWhiteSpace(allowedConversation))
+        if (string.IsNullOrWhiteSpace(allowedAccount))
         {
             return Error(context, StatusCodes.Status503ServiceUnavailable,
-                "READER_SCOPE_NOT_CONFIGURED", "The authorized Reader target is not configured.", retryable: false);
+                "READER_SCOPE_NOT_CONFIGURED", "The authorized Reader account is not configured.", retryable: false);
         }
 
         RawMessageEventV1? message;
@@ -72,7 +71,9 @@ public static class ConversationEndpoints
 
         if (!string.Equals(message!.Provider, allowedProvider, StringComparison.Ordinal)
             || !string.Equals(message.AccountExternalId, allowedAccount, StringComparison.Ordinal)
-            || !string.Equals(message.ConversationExternalId, allowedConversation, StringComparison.Ordinal))
+            || !await IsReaderTargetAllowedAsync(
+                dataSource, allowedProvider, message.AccountExternalId!, message.ConversationExternalId!,
+                allowedAccount, cancellationToken))
         {
             return Error(context, StatusCodes.Status403Forbidden,
                 "READER_SCOPE_NOT_ALLOWED", "The event is outside the configured Reader target.", retryable: false);
@@ -119,11 +120,10 @@ public static class ConversationEndpoints
 
         var allowedProvider = configuration["Reader:Provider"] ?? "local-wechat";
         var allowedAccount = configuration["Reader:AllowedAccountExternalId"];
-        var allowedConversation = configuration["Reader:AllowedConversationExternalId"];
-        if (string.IsNullOrWhiteSpace(allowedAccount) || string.IsNullOrWhiteSpace(allowedConversation))
+        if (string.IsNullOrWhiteSpace(allowedAccount))
         {
             return Error(context, StatusCodes.Status503ServiceUnavailable,
-                "READER_SCOPE_NOT_CONFIGURED", "The authorized Reader target is not configured.", retryable: false);
+                "READER_SCOPE_NOT_CONFIGURED", "The authorized Reader account is not configured.", retryable: false);
         }
 
         HistoryBatchV1? batch;
@@ -166,7 +166,9 @@ public static class ConversationEndpoints
         }
 
         if (!string.Equals(batch!.AccountExternalId, allowedAccount, StringComparison.Ordinal)
-            || !string.Equals(batch.ConversationExternalId, allowedConversation, StringComparison.Ordinal)
+            || !await IsReaderTargetAllowedAsync(
+                dataSource, allowedProvider, batch.AccountExternalId!, batch.ConversationExternalId!,
+                allowedAccount, cancellationToken)
             || batch.Items!.Any(item => item is null
                 || !string.Equals(item.Provider, allowedProvider, StringComparison.Ordinal)))
         {
@@ -190,6 +192,52 @@ public static class ConversationEndpoints
             return Error(context, StatusCodes.Status400BadRequest,
                 "INVALID_HISTORY_BATCH", "The history batch does not satisfy the required contract.", retryable: false);
         }
+    }
+
+    private static async Task<bool> IsReaderTargetAllowedAsync(
+        NpgsqlDataSource dataSource,
+        string provider,
+        string accountExternalId,
+        string conversationExternalId,
+        string? configuredAccountExternalId,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(configuredAccountExternalId)
+            || !string.Equals(accountExternalId, configuredAccountExternalId, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        const string sql = """
+            SELECT EXISTS (
+                SELECT 1
+                FROM copilot.chat_accounts AS account
+                JOIN copilot.conversations AS conversation
+                  ON conversation.account_id = account.id
+                 AND conversation.conversation_type = 'Direct'
+                WHERE account.provider = @provider
+                  AND account.external_account_id = @account_external_id
+                  AND conversation.external_conversation_id = @conversation_external_id
+                  AND (
+                      NOT EXISTS (
+                          SELECT 1 FROM copilot.reader_target_sets AS target_set
+                          WHERE target_set.account_id = account.id
+                      )
+                      OR EXISTS (
+                          SELECT 1
+                          FROM copilot.monitored_conversation_targets AS target
+                          WHERE target.account_id = account.id
+                            AND target.conversation_id = conversation.id
+                      )
+                  )
+            );
+            """;
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("provider", provider);
+        command.Parameters.AddWithValue("account_external_id", accountExternalId);
+        command.Parameters.AddWithValue("conversation_external_id", conversationExternalId);
+        return (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
     }
 
     private static IResult Error(

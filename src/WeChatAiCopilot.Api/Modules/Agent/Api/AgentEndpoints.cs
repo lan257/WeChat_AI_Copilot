@@ -2,6 +2,8 @@ using System.Text.Json;
 using Npgsql;
 using WeChatAiCopilot.Api.Contracts.V1;
 using WeChatAiCopilot.Api.Modules.Agent.Application;
+using WeChatAiCopilot.Api.Modules.Agent.Contracts;
+using WeChatAiCopilot.Api.Modules.Conversations.Api;
 using WeChatAiCopilot.Api.Modules.Memory.Contracts;
 using WeChatAiCopilot.Api.Platform.Authentication;
 
@@ -19,6 +21,7 @@ public static class AgentEndpoints
         var agent = endpoints.MapGroup("/api/ai")
             .AddEndpointFilter(new BearerTokenEndpointFilter(configuration, "Authentication:WebBearerToken"));
         agent.MapGet("/personas", GetPersonas);
+        agent.MapGet("/execution-profiles", GetExecutionProfiles);
         agent.MapPost("/suggestions", CreateSuggestionsAsync);
         agent.MapGet("/suggestions/{batchId:guid}", GetSuggestionBatchAsync);
         agent.MapGet("/runs/{runId:guid}", GetAgentRunAsync);
@@ -36,6 +39,21 @@ public static class AgentEndpoints
             personas = catalog?.GetAvailablePersonas() ?? Array.Empty<AgentPersonaPresetSummaryV1>()
         });
     }
+
+    private static IResult GetExecutionProfiles() => Results.Ok(new
+    {
+        profiles = AgentExecutionProfilesV1.GetAvailable().Select(profile => new
+        {
+            executionProfileId = profile.ExecutionProfileId.ToString(),
+            profile.Label,
+            profile.Description,
+            profile.RecentMessageLimit,
+            profile.IncludeMemory,
+            profile.MaximumHistorySearches,
+            profile.ReviewSuggestions,
+            profile.RuntimeNote
+        }).ToArray()
+    });
 
     private static async Task<IResult> CreateSuggestionsAsync(
         HttpContext context,
@@ -211,7 +229,8 @@ public static class AgentEndpoints
                 access.Scope!,
                 threadId,
                 body.UserInput,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                body.ExecutionProfileId).ConfigureAwait(false);
             return Results.Ok(turn);
         }
         catch (Exception exception) when (IsAgentOperationException(exception))
@@ -226,17 +245,26 @@ public static class AgentEndpoints
         IServiceProvider services,
         CancellationToken cancellationToken)
     {
-        if (!TryGetWebTarget(configuration, out var target))
-        {
-            return ScopeResolution.Failed(Error(context, StatusCodes.Status503ServiceUnavailable,
-                "WEB_SCOPE_NOT_CONFIGURED", "The authorized Web account and conversation are not configured.", retryable: false));
-        }
-
-        if (services.GetService<NpgsqlDataSource>() is null)
+        var dataSource = services.GetService<NpgsqlDataSource>();
+        if (dataSource is null)
         {
             return ScopeResolution.Failed(Error(context, StatusCodes.Status503ServiceUnavailable,
                 "DATABASE_NOT_CONFIGURED", "The formal message store is not configured.", retryable: true));
         }
+
+        WebConversationTargetResolutionV1 resolution;
+        try
+        {
+            resolution = await WebConversationScopeResolverV1.ResolveAsync(
+                context, configuration, dataSource, cancellationToken).ConfigureAwait(false);
+        }
+        catch (NpgsqlException)
+        {
+            return ScopeResolution.Failed(DatabaseUnavailable(context));
+        }
+
+        if (resolution.Error is not null) return ScopeResolution.Failed(resolution.Error);
+        var target = resolution.Target!;
 
         IAgentTaskApplicationServiceV1? service;
         try
@@ -262,7 +290,9 @@ public static class AgentEndpoints
 
         try
         {
-            var scope = await service.ResolveAuthorizedScopeAsync(target, cancellationToken).ConfigureAwait(false);
+            var agentTarget = new AgentWebConversationTargetV1(
+                target.Provider, target.AccountExternalId, target.ConversationExternalId);
+            var scope = await service.ResolveAuthorizedScopeAsync(agentTarget, cancellationToken).ConfigureAwait(false);
             return scope is null
                 ? ScopeResolution.Failed(NotFound(context, "CONVERSATION_NOT_FOUND", "The authorized conversation is not available."))
                 : ScopeResolution.Succeeded(service, scope);
@@ -271,25 +301,6 @@ public static class AgentEndpoints
         {
             return ScopeResolution.Failed(DatabaseUnavailable(context));
         }
-    }
-
-    private static bool TryGetWebTarget(
-        IConfiguration configuration,
-        out AgentWebConversationTargetV1 target)
-    {
-        var accountExternalId = configuration["Web:AllowedAccountExternalId"];
-        var conversationExternalId = configuration["Web:AllowedConversationExternalId"];
-        if (string.IsNullOrWhiteSpace(accountExternalId) || string.IsNullOrWhiteSpace(conversationExternalId))
-        {
-            target = default!;
-            return false;
-        }
-
-        target = new AgentWebConversationTargetV1(
-            configuration["Web:Provider"] ?? "local-wechat",
-            accountExternalId,
-            conversationExternalId);
-        return true;
     }
 
     private static async Task<(T? Body, IResult? Error)> ReadJsonBodyAsync<T>(
@@ -330,8 +341,10 @@ public static class AgentEndpoints
             module.Code, "The Agent module is not configured for execution.", retryable: true),
         AgentTaskExecutionException => Error(context, StatusCodes.Status503ServiceUnavailable,
             "AGENT_EXECUTION_FAILED", "The Agent could not complete this request.", retryable: true),
-        AgentTaskContractException => Error(context, StatusCodes.Status503ServiceUnavailable,
-            "AGENT_RESULT_INVALID", "The Agent returned a result that failed contract validation.", retryable: true),
+        AgentTaskContractException contract => Error(context, StatusCodes.Status503ServiceUnavailable,
+            "AGENT_RESULT_INVALID",
+            $"The Agent task or result failed contract validation ({GetSafeContractViolationCode(contract)}).",
+            retryable: true),
         UnauthorizedAccessException => NotFound(context, "AGENT_RESOURCE_NOT_FOUND", "The requested Agent resource is not available."),
         ArgumentException => Error(context, StatusCodes.Status400BadRequest,
             "INVALID_AGENT_REQUEST", "The Agent request is invalid.", retryable: false),
@@ -341,6 +354,16 @@ public static class AgentEndpoints
         _ => Error(context, StatusCodes.Status503ServiceUnavailable,
             "AGENT_UNAVAILABLE", "The Agent module is temporarily unavailable.", retryable: true)
     };
+
+    private static string GetSafeContractViolationCode(AgentTaskContractException exception)
+    {
+        var code = exception.Violations.FirstOrDefault()?.Code;
+        return !string.IsNullOrWhiteSpace(code)
+            && code.Length <= 64
+            && code.All(character => char.IsAsciiLetterOrDigit(character) || character == '_')
+                ? code
+                : "UNKNOWN_CONTRACT_VIOLATION";
+    }
 
     private static IResult DatabaseUnavailable(HttpContext context) => Error(context,
         StatusCodes.Status503ServiceUnavailable,
@@ -372,4 +395,5 @@ public static class AgentEndpoints
 public sealed record CreateAgentConsultationTurnRequestV1
 {
     public string? UserInput { get; init; }
+    public AgentExecutionProfileIdV1 ExecutionProfileId { get; init; } = AgentExecutionProfileIdV1.Balanced;
 }

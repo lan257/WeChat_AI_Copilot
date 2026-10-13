@@ -191,6 +191,20 @@ internal sealed class ConfiguredAgentTaskCoordinatorV1(
             return null;
         }
 
+        var profileModelIds = new Dictionary<AgentExecutionProfileIdV1, string>();
+        foreach (var profileId in Enum.GetValues<AgentExecutionProfileIdV1>())
+        {
+            var modelId = configuration[$"Agent:ExecutionProfiles:{profileId}:ModelId"];
+            if (string.IsNullOrWhiteSpace(modelId)) continue;
+            if (modelId.Length > 80
+                || modelId.Any(character => !char.IsAsciiLetterOrDigit(character) && character is not '-' and not '_' and not '.'))
+            {
+                return null;
+            }
+
+            profileModelIds.Add(profileId, modelId);
+        }
+
         return new AgentTaskCoordinatorOptionsV1
         {
             SkillVersion = skillVersion,
@@ -203,6 +217,7 @@ internal sealed class ConfiguredAgentTaskCoordinatorV1(
             },
             RecentMessageLimit = recentMessageLimit,
             IncludeMemory = !bool.TryParse(configuration["Agent:IncludeMemory"], out var includeMemory) || includeMemory,
+            ProfileModelIds = profileModelIds,
             MaxConsultationHistoryTurns = maxConsultationHistoryTurns,
             MaxConsultationHistoryCharacters = maxConsultationHistoryCharacters
         };

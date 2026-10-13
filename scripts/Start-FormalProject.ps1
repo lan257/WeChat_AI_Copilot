@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $productRoot = Split-Path -Parent $PSScriptRoot
@@ -8,6 +8,7 @@ $readerScript = Join-Path $readerRoot 'reader.py'
 $stateRoot = Join-Path $env:LOCALAPPDATA 'WeChatAiCopilot\Formal'
 $readerSettingsRoot = Join-Path $env:LOCALAPPDATA 'WeChatAiCopilot\Reader'
 $scopePath = Join-Path $stateRoot 'scope.json'
+$approvedScopePath = Join-Path $stateRoot 'scope-approved.sha256'
 $secretsPath = Join-Path $stateRoot 'secrets.json'
 $dataRoot = Join-Path $stateRoot 'postgres-data'
 $databaseName = 'wechat_ai_copilot_formal'
@@ -51,6 +52,136 @@ function Protect-LocalText([string] $value) {
     return ConvertFrom-SecureString -SecureString $secure
 }
 
+function Test-ReaderPython311([string] $pythonPath) {
+    if (-not (Test-Path -LiteralPath $pythonPath -PathType Leaf)) { return $false }
+    try {
+        & $pythonPath '-I' '-c' 'import sys; sys.exit(0 if sys.version_info[:2] == (3, 11) else 1)' *> $null
+        return $LASTEXITCODE -eq 0
+    }
+    catch { return $false }
+}
+
+function Resolve-ReaderPython311 {
+    $launcher = Get-Command py.exe -ErrorAction SilentlyContinue
+    if ($launcher) {
+        try {
+            $output = @(& $launcher.Source '-3.11' '-c' 'import sys; print(sys.executable)' 2>$null)
+            $exitCode = $LASTEXITCODE
+            if ($exitCode -eq 0 -and $output.Count -gt 0) {
+                $candidate = ([string]$output[-1]).Trim()
+                if (Test-ReaderPython311 $candidate) { return $candidate }
+            }
+        }
+        catch { }
+    }
+
+    $candidates = @(
+        (Join-Path $env:LOCALAPPDATA 'Programs\Python\Python311\python.exe'),
+        (Join-Path $env:ProgramFiles 'Python311\python.exe'),
+        'C:\Python311\python.exe'
+    ) | Select-Object -Unique
+    foreach ($candidate in $candidates) {
+        if (Test-ReaderPython311 $candidate) { return $candidate }
+    }
+
+    throw '未找到可运行已准备 Reader 组件的 Python 3.11。请确认已为当前 Windows 用户安装 Python 3.11 后再次启动；完成此项检查前不会初始化本机数据库。'
+}
+
+function Get-ScopeFingerprint($scope) {
+    $identity = @(
+        [string]$scope.provider,
+        [string]$scope.accountExternalId,
+        [string]$scope.conversationExternalId,
+        [string]$scope.displayName
+    ) -join "`n"
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return [BitConverter]::ToString($sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($identity))).Replace('-', '').ToLowerInvariant()
+    }
+    finally { $sha.Dispose() }
+}
+
+function Test-ValidLocalScope($scope) {
+    if (-not $scope -or
+        $scope.provider -ne 'local-wechat' -or
+        [string]::IsNullOrWhiteSpace([string]$scope.accountExternalId) -or
+        [string]::IsNullOrWhiteSpace([string]$scope.conversationExternalId) -or
+        [string]::IsNullOrWhiteSpace([string]$scope.displayName)) { return $false }
+    if ([string]$scope.conversationExternalId -match '(@chatroom$|^gh_)') { return $false }
+    return $true
+}
+
+function Save-LocalScopeApproval($scope) {
+    $fingerprint = Get-ScopeFingerprint $scope
+    [System.IO.File]::WriteAllText($approvedScopePath, $fingerprint, [System.Text.UTF8Encoding]::new($false))
+}
+
+function Resolve-LocalContactScope([string] $pythonExe, [string] $displayName, [string] $wechatExecutablePath) {
+    $requestPath = Join-Path $stateRoot 'scope-request.tmp.json'
+    $resolvedPath = Join-Path $stateRoot 'scope.tmp.json'
+    $request = [ordered]@{ displayName = $displayName; wechatExecutablePath = $wechatExecutablePath }
+    [System.IO.File]::WriteAllText($requestPath, ($request | ConvertTo-Json -Compress), [System.Text.UTF8Encoding]::new($false))
+    try {
+        & $pythonExe $readerScript 'resolve-scope' '--request-file' $requestPath '--output' $resolvedPath *> $null
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $resolvedPath -PathType Leaf)) {
+            throw '无法在本机微信中唯一确认该显示名对应的一对一联系人；未保存会话授权配置。请确认微信已登录且该显示名唯一。'
+        }
+
+        $resolvedJson = [System.IO.File]::ReadAllText($resolvedPath, [System.Text.Encoding]::UTF8)
+        $resolvedScope = $resolvedJson | ConvertFrom-Json
+        if (-not (Test-ValidLocalScope $resolvedScope) -or
+            [string]$resolvedScope.displayName -cne $displayName) {
+            throw '本机只读读取器返回的会话范围未通过校验；未保存配置。'
+        }
+
+        Move-Item -LiteralPath $resolvedPath -Destination $scopePath -Force
+        Save-LocalScopeApproval $resolvedScope
+        return $resolvedScope
+    }
+    finally {
+        Remove-Item -LiteralPath $requestPath,$resolvedPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Get-ApprovedLocalScope([string] $pythonExe) {
+    $existingScope = $null
+    if (Test-Path -LiteralPath $scopePath -PathType Leaf) {
+        try {
+            $scopeJson = [System.IO.File]::ReadAllText($scopePath, [System.Text.Encoding]::UTF8)
+            $candidate = $scopeJson | ConvertFrom-Json
+            if (Test-ValidLocalScope $candidate) { $existingScope = $candidate }
+        }
+        catch { $existingScope = $null }
+    }
+
+    if ($existingScope) {
+        $expectedFingerprint = Get-ScopeFingerprint $existingScope
+        $savedFingerprint = if (Test-Path -LiteralPath $approvedScopePath) { (Get-Content -Raw -LiteralPath $approvedScopePath).Trim() } else { '' }
+        if ($savedFingerprint -eq $expectedFingerprint) { return $existingScope }
+    }
+
+    $wechatProcess = Get-Process -Name 'Weixin' -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $wechatProcess) {
+        throw '请先打开并登录微信，然后重新启动正式项目以确认所选联系人。'
+    }
+
+    if ($existingScope) {
+        $displayName = Read-Host "当前配置尚未确认或已更改。请输入要使用的一对一联系人显示名（当前配置：$($existingScope.displayName)）"
+    }
+    else {
+        $displayName = Read-Host '请输入要连接的一对一联系人显示名'
+    }
+
+    $displayName = [string]$displayName
+    if ([string]::IsNullOrWhiteSpace($displayName)) {
+        throw '未选择联系人；未保存会话授权配置。'
+    }
+
+    $wechatExecutablePath = [string]$wechatProcess.Path
+    $resolvedScope = Resolve-LocalContactScope $pythonExe $displayName $wechatExecutablePath
+    return $resolvedScope
+}
+
 function Unprotect-LocalText([string] $value) {
     $secure = ConvertTo-SecureString -String $value
     $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
@@ -59,8 +190,9 @@ function Unprotect-LocalText([string] $value) {
 }
 
 function Resolve-PostgresBin {
-    $service = Get-CimInstance Win32_Service -Filter "Name='postgresql-x64-18'" -ErrorAction SilentlyContinue
-    if ($service -and $service.PathName -match '(?i)([A-Z]:\\[^" ]*?\\pg_ctl\.exe)') {
+    $serviceFilter = 'Name=' + [char]39 + 'postgresql-x64-18' + [char]39
+    $service = Get-CimInstance Win32_Service -Filter $serviceFilter -ErrorAction SilentlyContinue
+    if ($service -and $service.PathName -match '(?i)([A-Z]:\\.*?\\pg_ctl\.exe)') {
         $candidate = Split-Path -Parent $Matches[1]
         if (Test-Path (Join-Path $candidate 'initdb.exe')) { return $candidate }
     }
@@ -102,11 +234,62 @@ function Invoke-LocalPsql([string] $psqlPath, $secrets, [string] $database, [str
     finally { Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue }
 }
 
+function Test-PrivatePostgresProcessRunning {
+    $normalizedDataRoot = [System.IO.Path]::GetFullPath($dataRoot).TrimEnd('\')
+    $processes = @(Get-CimInstance Win32_Process -Filter "Name='postgres.exe'" -ErrorAction SilentlyContinue)
+    foreach ($process in $processes) {
+        $commandLine = ([string]$process.CommandLine).Replace('/', '\')
+        if ($commandLine.IndexOf($normalizedDataRoot, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Remove-StalePrivatePostgresPidFile {
+    $pidPath = Join-Path $dataRoot 'postmaster.pid'
+    if (-not (Test-Path -LiteralPath $pidPath -PathType Leaf)) { return }
+
+    $lines = @(Get-Content -LiteralPath $pidPath -ErrorAction Stop)
+    $recordedPid = 0
+    $recordedPort = 0
+    if (($lines.Count -lt 6) -or
+        (-not [int]::TryParse([string]$lines[0], [ref]$recordedPid)) -or
+        (-not [int]::TryParse([string]$lines[3], [ref]$recordedPort))) {
+        throw 'The private PostgreSQL PID file is incomplete; it was left untouched.'
+    }
+
+    try { $recordedDataRoot = [System.IO.Path]::GetFullPath([string]$lines[1]).TrimEnd('\') }
+    catch { throw 'The private PostgreSQL PID file has an invalid data path; it was left untouched.' }
+    $normalizedDataRoot = [System.IO.Path]::GetFullPath($dataRoot).TrimEnd('\')
+    if ((-not [string]::Equals($recordedDataRoot, $normalizedDataRoot, [StringComparison]::OrdinalIgnoreCase)) -or
+        ($recordedPort -ne $databasePort)) {
+        throw 'The PostgreSQL PID file does not match this private database; it was left untouched.'
+    }
+
+    if (Test-PrivatePostgresProcessRunning) {
+        throw 'A PostgreSQL process still references the private data directory, but pg_ctl could not verify it; no files were changed.'
+    }
+
+    $listeners = @(Get-NetTCPConnection -State Listen -LocalPort $databasePort -ErrorAction SilentlyContinue)
+    if ($listeners.Count -gt 0) {
+        throw 'The private PostgreSQL port is occupied; the PID file was left untouched.'
+    }
+
+    Remove-Item -LiteralPath $pidPath -Force
+    Write-Host '已确认私有数据库进程退出，清除了过期 PID 文件。'
+}
+
 function Ensure-LocalDatabase([string] $bin, $secrets) {
     $pgCtl = Join-Path $bin 'pg_ctl.exe'
     $initDb = Join-Path $bin 'initdb.exe'
     $psql = Join-Path $bin 'psql.exe'
     $postgres = Join-Path $bin 'postgres.exe'
+    foreach ($requiredTool in @($pgCtl, $initDb, $psql, $postgres)) {
+        if (-not (Test-Path -LiteralPath $requiredTool -PathType Leaf)) {
+            throw 'The PostgreSQL 18 installation is incomplete; a required database executable is missing.'
+        }
+    }
     if (-not (Test-Path (Join-Path $dataRoot 'PG_VERSION'))) {
         Set-StartupStage '正在建立本机专用数据库…'
         if (Test-Path $dataRoot) {
@@ -122,8 +305,18 @@ function Ensure-LocalDatabase([string] $bin, $secrets) {
         finally { Remove-Item -LiteralPath $passwordFile -Force -ErrorAction SilentlyContinue }
     }
 
-    & $pgCtl '-D' $dataRoot 'status' *> $null
-    if ($LASTEXITCODE -ne 0) {
+    $previousErrorActionPreference = $ErrorActionPreference
+    $databaseIsRunning = $false
+    try {
+        $ErrorActionPreference = 'Continue'
+        & $pgCtl '-D' $dataRoot 'status' *> $null
+        $databaseIsRunning = $LASTEXITCODE -eq 0
+    }
+    catch { $databaseIsRunning = $false }
+    finally { $ErrorActionPreference = $previousErrorActionPreference }
+
+    if (-not $databaseIsRunning) {
+        Remove-StalePrivatePostgresPidFile
         Set-StartupStage '正在启动本机专用数据库…'
         $postgresProcess = Start-Process -FilePath $postgres -ArgumentList @('-D', $dataRoot, '-h', '127.0.0.1', '-p', "$databasePort") -WorkingDirectory $stateRoot -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $stateRoot 'postgres.log') -RedirectStandardError (Join-Path $stateRoot 'postgres-error.log')
         Set-StartupStage '本机数据库进程已启动，正在等待就绪…'
@@ -136,6 +329,10 @@ function Ensure-LocalDatabase([string] $bin, $secrets) {
             try {
                 $probe = & $psql '-X' '-q' '-A' '-t' '-h' '127.0.0.1' '-p' "$databasePort" '-U' 'copilot_bootstrap' '-d' 'postgres' '-c' 'SELECT 1' 2>$null
                 $ready = ($LASTEXITCODE -eq 0 -and ($probe -join '').Trim() -eq '1')
+            }
+            catch {
+                # Windows PowerShell 5.1 may promote transient native stderr to a terminating error.
+                $ready = $false
             }
             finally {
                 Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
@@ -167,7 +364,8 @@ WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'wechat_ai_copilot_f
     [System.IO.File]::WriteAllText($connectionTest, 'SELECT 1;', [System.Text.UTF8Encoding]::new($false))
     $env:PGPASSWORD = $secrets.DatabasePassword
     try {
-        & $psql '-X' '-q' '-v' 'ON_ERROR_STOP=1' '-h' '127.0.0.1' '-p' "$databasePort" '-U' $databaseUser '-d' $databaseName '-f' $connectionTest | Out-Null
+        $portText = [string]$databasePort
+        & $psql '-X' '-q' '-v' 'ON_ERROR_STOP=1' '-h' '127.0.0.1' '-p' $portText '-U' $databaseUser '-d' $databaseName '-f' $connectionTest | Out-Null
         if ($LASTEXITCODE -ne 0) { throw 'The private local application database is not ready.' }
     }
     finally {
@@ -199,7 +397,8 @@ function Start-FormalApi($scope, $secrets) {
     if (Test-Path -LiteralPath $apiPidPath) {
         $candidateId = 0
         if ([int]::TryParse((Get-Content -Raw -LiteralPath $apiPidPath), [ref]$candidateId)) {
-            $candidate = Get-CimInstance Win32_Process -Filter "ProcessId=$candidateId" -ErrorAction SilentlyContinue
+            $processFilter = 'ProcessId=' + [string]$candidateId
+            $candidate = Get-CimInstance Win32_Process -Filter $processFilter -ErrorAction SilentlyContinue
             if ($candidate -and $candidate.CommandLine -like '*WeChatAiCopilot.Api.dll*') {
                 $existingProcessId = $candidateId
             }
@@ -270,6 +469,30 @@ function Start-FormalApi($scope, $secrets) {
     throw 'The formal app did not become ready. The local API log contains only service diagnostics.'
 }
 
+function Test-CompletedHistoryImportReceipt([string] $path) {
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $false }
+    $content = [System.IO.File]::ReadAllText($path)
+    $requiredFields = @(
+        '"contract"\s*:\s*"HistoryBatchV1"',
+        '"status"\s*:\s*"Completed"',
+        '"httpStatus"\s*:\s*200',
+        '"isLastBatch"\s*:\s*true',
+        '"failed"\s*:\s*0'
+    )
+    foreach ($pattern in $requiredFields) {
+        if ($content -notmatch $pattern) { return $false }
+    }
+    return $true
+}
+
+function Get-HistoryImportFailureCode([string] $path) {
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $null }
+    $content = [System.IO.File]::ReadAllText($path)
+    $match = [regex]::Match($content, '"error"\s*:\s*\{[^}]*"code"\s*:\s*"([A-Za-z0-9_-]{1,64})"')
+    if ($match.Success) { return $match.Groups[1].Value.ToUpperInvariant().Replace('-', '_') }
+    return $null
+}
+
 function Import-InitialHistory($scope, $secrets, [string] $pythonExe) {
     if (Test-Path -LiteralPath $historyMarker) { return }
     if (-not (Test-Path -LiteralPath $readerScript)) { throw 'The formal Reader source is missing.' }
@@ -278,8 +501,22 @@ function Import-InitialHistory($scope, $secrets, [string] $pythonExe) {
     Write-ReaderSettings $scope $secrets
     $historyLog = Join-Path $stateRoot 'reader-history.log'
     $jobId = 'local-first-' + [Guid]::NewGuid().ToString('N')
-    & $pythonExe $readerScript 'history' '--job-id' $jobId '--max-rows' '5000' '--batch-size' '100' *> $historyLog
-    if ($LASTEXITCODE -ne 0) { throw 'The real WeChat history import failed; no synthetic messages were used. See the sanitized Reader status log.' }
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        # Windows PowerShell 5.1 promotes native stderr to an error record even when
+        # Reader uses stderr for its documented sanitized success receipt.
+        $ErrorActionPreference = 'Continue'
+        & $pythonExe $readerScript 'history' '--job-id' $jobId '--max-rows' '5000' '--batch-size' '100' *> $historyLog
+        $readerExitCode = $LASTEXITCODE
+    }
+    finally { $ErrorActionPreference = $previousErrorActionPreference }
+    if ($readerExitCode -ne 0 -and -not (Test-CompletedHistoryImportReceipt $historyLog)) {
+        $failureCode = Get-HistoryImportFailureCode $historyLog
+        if ($failureCode) {
+            throw "The real WeChat history import failed ($failureCode); no synthetic messages were used. See the sanitized Reader status log."
+        }
+        throw "The real WeChat history import failed (Reader exit code $readerExitCode); no synthetic messages were used. See the sanitized Reader status log."
+    }
 
     $psql = Join-Path (Resolve-PostgresBin) 'psql.exe'
     $accountSql = ([string]$scope.accountExternalId).Replace("'", "''")
@@ -325,22 +562,45 @@ function Stop-FormalServices([string] $bin) {
         }
         Remove-Item -LiteralPath $apiPidPath -Force -ErrorAction SilentlyContinue
     }
+    if (-not $bin) { return }
+    $pidPath = Join-Path $dataRoot 'postmaster.pid'
+    if (-not (Test-Path -LiteralPath $pidPath -PathType Leaf)) { return }
+
     $pgCtl = Join-Path $bin 'pg_ctl.exe'
-    & $pgCtl '-D' $dataRoot '-m' 'fast' '-w' 'stop' *> $null
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        & $pgCtl '-D' $dataRoot 'status' *> $null
+        if ($LASTEXITCODE -ne 0) { return }
+        & $pgCtl '-D' $dataRoot '-m' 'fast' '-w' 'stop' *> $null
+        if ($LASTEXITCODE -ne 0) { Write-Host '本机数据库清理未完成；已保留数据库文件。' }
+    }
+    catch { Write-Host '本机数据库清理未完成；已保留数据库文件。' }
+    finally { $ErrorActionPreference = $previousErrorActionPreference }
 }
 
 $bin = $null
 try {
+    New-Item -ItemType Directory -Force -Path $stateRoot | Out-Null
+    Set-StartupStage '正在检查本机运行目录权限…'
     Set-PrivateDirectoryAcl $stateRoot
-    Set-PrivateDirectoryAcl $readerSettingsRoot
     Set-StartupStage '正在读取已授权会话配置…'
-    if (-not (Test-Path -LiteralPath $scopePath)) { throw 'No approved real WeChat contact is configured for this Windows user.' }
-    $scope = Get-Content -Raw -LiteralPath $scopePath | ConvertFrom-Json
-    if ($scope.provider -ne 'local-wechat' -or -not $scope.accountExternalId -or -not $scope.conversationExternalId -or -not $scope.displayName) {
+    Set-StartupStage '正在检查 Reader 运行环境…'
+    $pythonExe = Resolve-ReaderPython311
+    $readerRuntime = Join-Path $readerRoot '.runtime\package\wechatauto\db.py'
+    if (-not (Test-Path -LiteralPath $readerRuntime)) {
+        throw 'The verified Reader runtime has not been prepared. Contact support before continuing.'
+    }
+
+    Set-StartupStage '正在确认本机授权会话…'
+    $scope = Get-ApprovedLocalScope $pythonExe
+    if (-not (Test-ValidLocalScope $scope)) {
         throw 'The selected WeChat conversation configuration is incomplete.'
     }
-    if ([string]$scope.conversationExternalId -match '(@chatroom$|^gh_)') { throw 'Only a direct one-to-one conversation is supported.' }
+    $scopeHistoryFingerprint = Get-ScopeFingerprint $scope
+    $historyMarker = Join-Path $stateRoot ("initial-history-imported-$scopeHistoryFingerprint.json")
 
+    Set-PrivateDirectoryAcl $readerSettingsRoot
     $secrets = Read-LocalSecrets
     if (-not $secrets) {
         $secrets = [pscustomobject]@{
@@ -355,15 +615,6 @@ try {
     $bin = Resolve-PostgresBin
     Set-StartupStage '正在准备本机数据库…'
     Ensure-LocalDatabase $bin $secrets
-
-    Set-StartupStage '正在检查 Python 3.11 和 Reader…'
-    $pythonExe = (& py -3.11 -c 'import sys; print(sys.executable)').Trim()
-    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $pythonExe)) { throw 'Python 3.11 is not available for the read-only WeChat Reader.' }
-    Write-Host '正在验证已准备的微信只读组件…'
-    $readerRuntime = Join-Path $readerRoot '.runtime\package\wechatauto\db.py'
-    if (-not (Test-Path -LiteralPath $readerRuntime)) {
-        throw 'The verified Reader runtime has not been prepared. Contact support before continuing.'
-    }
 
     $wechatProcess = Get-Process -Name 'Weixin' -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $wechatProcess) {
@@ -386,8 +637,14 @@ try {
     Write-Host 'Reader 仅显示状态回执，不会在此窗口输出微信消息正文。'
     Write-Host ''
 
-    & $pythonExe $readerScript 'realtime'
-    if ($LASTEXITCODE -ne 0) { Write-Host 'Reader 已停止。请查看本机应用状态日志中的错误码。' }
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        & $pythonExe $readerScript 'realtime'
+        $readerExitCode = $LASTEXITCODE
+    }
+    finally { $ErrorActionPreference = $previousErrorActionPreference }
+    if ($readerExitCode -ne 0) { Write-Host 'Reader 已停止。请查看本机应用状态日志中的错误码。' }
 }
 catch {
     Write-Host ''

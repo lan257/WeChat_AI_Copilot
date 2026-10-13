@@ -10,6 +10,14 @@ public enum AgentTaskTypeV1
     FreeConsultation
 }
 
+public enum AgentExecutionProfileIdV1
+{
+    Quick,
+    Balanced,
+    Deep,
+    Max
+}
+
 public enum AgentRunStatusV1
 {
     Queued,
@@ -30,6 +38,7 @@ public enum AgentReadCapabilityV1
 public sealed record AgentTaskV1
 {
     public AgentTaskTypeV1 TaskType { get; init; }
+    public AgentExecutionProfileIdV1 ExecutionProfileId { get; init; } = AgentExecutionProfileIdV1.Quick;
     public Guid AccountId { get; init; }
     public Guid ConversationId { get; init; }
     public string? PersonaPresetId { get; init; }
@@ -134,6 +143,7 @@ public sealed record SuggestionBatchV1
 {
     public string? RunId { get; init; }
     public AgentTaskTypeV1 TaskType { get; init; } = AgentTaskTypeV1.ReplyCandidates;
+    public AgentExecutionProfileIdV1 ExecutionProfileId { get; init; } = AgentExecutionProfileIdV1.Quick;
     public Guid AccountId { get; init; }
     public Guid ConversationId { get; init; }
     public string? PersonaPresetId { get; init; }
@@ -163,6 +173,10 @@ public sealed record ConsultationTurnV1
 /// </summary>
 public sealed record AgentRunBudgetMetadataV1
 {
+    public AgentExecutionProfileIdV1 ExecutionProfileId { get; init; } = AgentExecutionProfileIdV1.Quick;
+    public string? ModelId { get; init; }
+    public int RecentMessageLimit { get; init; }
+    public bool IncludeMemory { get; init; }
     public long? MaxDurationMilliseconds { get; init; }
     public int? MaxContextCharacters { get; init; }
     public int? MaxToolCalls { get; init; }
@@ -181,6 +195,7 @@ public sealed record AgentRunV1
     public string? RuntimeName { get; init; }
     public string? SkillVersion { get; init; }
     public string? ContextRevision { get; init; }
+    public AgentExecutionProfileIdV1 ExecutionProfileId { get; init; } = AgentExecutionProfileIdV1.Balanced;
     public AgentRunStatusV1 Status { get; init; }
     public DateTimeOffset StartedAtUtc { get; init; }
     public DateTimeOffset? EndedAtUtc { get; init; }
@@ -195,6 +210,8 @@ public sealed record AgentRunV1
 public sealed record ScopedAgentRequestV1
 {
     public AgentTaskV1? Task { get; init; }
+    /// <summary>Optional server-configured Runtime model for this profile.</summary>
+    public string? ModelId { get; init; }
     public AgentContextSnapshotV1? Context { get; init; }
     public AgentConsultationThreadV1? BoundThread { get; init; }
     public IContextToolSessionV1? ContextToolSession { get; init; }
