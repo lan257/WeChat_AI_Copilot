@@ -80,7 +80,9 @@ public sealed class V6SkillsPostgresTests
         { ScopeType = "Account", ConversationId = null })).Status);
         Assert.Equal(403, (await Invoke(app, scope, "PUT", "/api/skills/{id}", Write(global), global.SkillId)).Status);
         Assert.Equal(403, (await Invoke(app, scope, "DELETE", "/api/skills/{id}", null, global.SkillId)).Status);
-        Assert.Equal(403, (await Invoke(app, other, "GET", "/api/skills/", null)).Status);
+        // A conversation outside this device's grant is reported as absent, so a paired phone cannot
+        // learn which other conversations exist on the machine.
+        Assert.Equal(404, (await Invoke(app, other, "GET", "/api/skills/", null)).Status);
         // Reading and selecting a global expression template in an authorized conversation remains possible.
         Assert.Equal(200, (await Invoke(app, scope, "GET", "/api/skills/", null)).Status);
         Assert.Equal(200, (await Invoke(app, scope, "PUT", "/api/skills/selection", new SkillSelectionRequest(global.SkillId))).Status);

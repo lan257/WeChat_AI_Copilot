@@ -71,7 +71,7 @@ public static class OperationsEndpointsV1
         var checks=new List<object>();bool pass=true;var timer=Stopwatch.StartNew();
         void Add(string name,bool ready,string message,string recovery){pass&=ready;checks.Add(new{name,state=ready?"Ready":"Unavailable",message,recovery=ready?null:recovery});}
         if(request.Step==0){
-            try{await using var cmd=db.CreateCommand("SELECT count(*) FROM copilot.schema_migrations;");var count=Convert.ToInt32(await cmd.ExecuteScalarAsync(ct));Add("database",true,"本机消息库可以连接。","");Add("migrations",count>=17,"数据库迁移已检查。","关闭并重新启动应用以应用迁移。");}catch(NpgsqlException){Add("database",false,"本机消息库未就绪。","使用关闭系统入口后重新启动；保留本机数据目录。");}
+            try{await using var cmd=db.CreateCommand("SELECT count(*) FROM copilot.schema_migrations;");var count=Convert.ToInt32(await cmd.ExecuteScalarAsync(ct));Add("database",true,"本机消息库可以连接。","");Add("migrations",count>0,$"数据库迁移已检查（已登记 ${count} 项）。","关闭并重新启动应用以应用迁移。");}catch(NpgsqlException){Add("database",false,"本机消息库未就绪。","使用关闭系统入口后重新启动；保留本机数据目录。");}
             var root=config["Operations:StateRoot"]??Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"WeChatAiCopilot","Formal");
             try{var probe=Path.Combine(root,"diagnostic-"+Guid.NewGuid().ToString("N")+".tmp");Directory.CreateDirectory(root);await File.WriteAllTextAsync(probe,"permission-probe",ct);File.Delete(probe);Add("storage",true,"本机应用目录可以写入。","");}catch(IOException){Add("storage",false,"本机应用目录无法写入。","确认当前 Windows 用户有本机应用目录权限。");}catch(UnauthorizedAccessException){Add("storage",false,"本机应用目录访问被拒绝。","以安装应用的 Windows 用户启动。");}
         }else if(request.Step==1){

@@ -67,6 +67,15 @@ public sealed class WebSessionServiceV1(NpgsqlDataSource dataSource) : IWebSessi
         command.Parameters.AddWithValue("conversations",conversations); command.Parameters.AddWithValue("local",local);
         command.Parameters.AddWithValue("expires",expires);
         var sessionId = (Guid)(await command.ExecuteScalarAsync(ct))!;
+        await using var purge = dataSource.CreateCommand("""
+            DELETE FROM copilot.web_sessions
+            WHERE (expires_at < now() - interval '7 days')
+               OR (revoked_at IS NOT NULL AND revoked_at < now() - interval '7 days');
+            DELETE FROM copilot.device_pairing_grants
+            WHERE (expires_at < now() - interval '1 day')
+               OR (consumed_at IS NOT NULL AND consumed_at < now() - interval '1 day');
+            """);
+        await purge.ExecuteNonQueryAsync(ct);
         context.Response.Cookies.Append(CookieName,token,new CookieOptions {
             HttpOnly=true, SameSite=SameSiteMode.Strict, Secure=context.Request.IsHttps, Path="/", Expires=expires, IsEssential=true });
         context.Response.Headers.CacheControl="no-store";
