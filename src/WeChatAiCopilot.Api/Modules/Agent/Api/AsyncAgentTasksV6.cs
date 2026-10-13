@@ -19,7 +19,9 @@ public sealed record AgentTaskRequestV6
     public string TaskType {get;init;}="ReplyCandidates";
     public string? PersonaPresetId {get;init;}
     public AgentExecutionProfileIdV1 ExecutionProfileId {get;init;}=AgentExecutionProfileIdV1.Quick;
+    [System.Text.Json.Serialization.JsonConverter(typeof(WeChatAiCopilot.Api.Modules.Agent.Contracts.LenientGuidJsonConverterV1))]
     public Guid? PreviousBatchId {get;init;}
+    [System.Text.Json.Serialization.JsonConverter(typeof(WeChatAiCopilot.Api.Modules.Agent.Contracts.LenientGuidJsonConverterV1))]
     public Guid? ThreadId {get;init;}
     public string? UserInput {get;init;}
 }

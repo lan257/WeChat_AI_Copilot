@@ -1,4 +1,7 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using WeChatAiCopilot.Api.Contracts.V1;
+using WeChatAiCopilot.Api.Modules.Agent.Api;
 using WeChatAiCopilot.Api.Modules.Agent.Contracts;
 using WeChatAiCopilot.Api.Modules.Agent.Runtime;
 using Xunit;
@@ -10,6 +13,37 @@ public sealed class AgentContractsAndFakeRuntimeTests
     private readonly Guid _accountId = Guid.NewGuid();
     private readonly Guid _conversationId = Guid.NewGuid();
     private const string ContextRevision = "context-r1";
+
+    [Fact]
+    public void AgentTaskRequestV6_AcceptsBothSpellingsOfTheIdentifiersAgentResponsesEmit()
+    {
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        options.Converters.Add(new JsonStringEnumConverter(allowIntegerValues: false));
+        var thread = Guid.NewGuid();
+        var batch = Guid.NewGuid();
+
+        var undashed = JsonSerializer.Deserialize<AgentTaskRequestV6>(
+            $$"""{"taskType":"FreeConsultation","executionProfileId":"Quick","threadId":"{{thread:N}}","previousBatchId":"{{batch:N}}","userInput":"hi"}""",
+            options);
+        var dashed = JsonSerializer.Deserialize<AgentTaskRequestV6>(
+            $$"""{"taskType":"FreeConsultation","executionProfileId":"Quick","threadId":"{{thread:D}}","previousBatchId":"{{batch:D}}","userInput":"hi"}""",
+            options);
+
+        Assert.Equal(thread, undashed?.ThreadId);
+        Assert.Equal(batch, undashed?.PreviousBatchId);
+        Assert.Equal(thread, dashed?.ThreadId);
+        Assert.Equal(batch, dashed?.PreviousBatchId);
+    }
+
+    [Fact]
+    public void AgentTaskRequestV6_RejectsValuesThatAreNotGuids()
+    {
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        options.Converters.Add(new JsonStringEnumConverter(allowIntegerValues: false));
+
+        Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<AgentTaskRequestV6>(
+            """{"taskType":"FreeConsultation","threadId":"th-77","userInput":"hi"}""", options));
+    }
 
     [Fact]
     public void ValidateScopedRequest_AcceptsMatchingAuthorizedScope()
