@@ -1,0 +1,11 @@
+export const $ = id => document.getElementById(id);
+export const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+export const time = value => value ? new Date(value).toLocaleString('zh-CN', {month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '';
+export const intro = (title, description) => `<h3>${escape(title)}</h3><p class="intro">${escape(description)}</p>`;
+export const placeholder = message => `<div class="suggest-placeholder">${escape(message)}</div>`;
+export const card = (title, description, action = '') => `<div class="setting-card"><div class="setting-main"><strong>${escape(title)}</strong><p>${escape(description)}</p></div>${action}</div>`;
+export const button = (action, label, attrs = '', kind = 'secondary') => `<button class="${kind}" data-action="${action}" ${attrs}>${escape(label)}</button>`;
+export const isBusy = task => task && ['Queued','Running','CancelRequested'].includes(task.status);
+export const taskLabel = task => ({Queued:'任务已受理，正在排队…',Running:'正在执行…',CancelRequested:'正在取消…',Completed:'已完成',Failed:'任务失败',Cancelled:'已取消'}[task?.status] || '等待生成');
+export const phaseLabel = task => ({Preparing:'正在准备任务…',RetrievingContext:'正在读取授权上下文…',Generating:'正在生成回复…',GeneratingSuggestions:'正在生成三条建议…',ExecutingModel:'正在执行模型…',GeneratingPortrait:'正在更新有证据画像…',Reviewing:'正在复核事实与表达…',Queued:'任务已受理，正在排队…',Completed:'已完成',Failed:'任务失败',Cancelled:'已取消'}[task?.phase] || (/^[a-zA-Z]+$/.test(task?.phase||'')?taskLabel(task):task?.phase||taskLabel(task)));
+export const statusLabel = value => ({Ready:'就绪',Unavailable:'暂不可用',Available:'可用',Online:'在线',Listening:'监听中',Offline:'离线',Starting:'正在启动',Error:'出现故障',Unknown:'未知',Checking:'正在检测',Pending:'等待执行',Queued:'已排队',Running:'进行中',Completed:'本次已完成',Partial:'本次部分完成',Failed:'失败',Cancelled:'已取消',CancelRequested:'正在取消',Active:'有效',NeedsReview:'待核验',Deleted:'已删除',Superseded:'已修订',Disabled:'未启用',CodexCli:'Codex CLI'}[value] || value || '状态不可用');

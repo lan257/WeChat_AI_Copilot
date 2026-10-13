@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1, viewport-fit=cover" name="viewport"/>
+<meta content="light" name="color-scheme"/>
+<title>知间 · 微信 AI 沟通助手</title>
+<link rel="stylesheet" href="/v8/styles.css"/>
+</head>
+<body>
+<div id="app">
+<header class="topbar">
+<div class="brand"><span class="brandmark">知</span><div class="brandname">知间 <span class="brandtag">让每一次沟通都更从容</span></div></div>
+<div class="topright">
+<button class="top-chip" data-action="drawer" data-tab="contacts"><span data-icon="settings"></span><span class="label">设置</span></button>
+<button class="top-chip" data-action="focus"><span data-icon="minimize"></span><span class="label">极简模式</span></button>
+<button aria-label="联系人" class="iconbtn mobile-contacts" data-action="mobile-contacts"><span data-icon="users"></span></button>
+</div>
+</header>
+<div class="app-body">
+<aside class="sidebar" id="sidebar">
+<div class="side-top">
+<div class="subhead">当前微信账号</div>
+<div class="account-select-wrap"><span class="account-logo">微</span><div class="accopy"><strong id="accountName">微信 · 生活号</strong><small id="accountSub">已连接本机微信</small></div><span class="account-chev" data-icon="chevron-down"></span><select aria-label="切换微信账号" id="accountSelect"></select></div>
+<div class="side-search"><span data-icon="search"></span><input aria-label="搜索联系人" autocomplete="off" id="contactSearch" placeholder="搜索联系人或会话"/></div>
+</div>
+<div class="list-controls"><strong>消息</strong><div class="filter-group"><button class="active" data-action="filter" data-filter="all">全部</button><button data-action="filter" data-filter="listening">监听中</button></div></div>
+<div class="conv-list" id="conversationList"></div>
+<div class="side-bottom">
+<div class="listen-summary"><span><span class="live-light"></span><span id="listenCount">3 个会话正在监听</span></span><span class="side-note">持续后台采集</span></div>
+</div>
+</aside>
+<main class="chat-section">
+<div class="chat-header">
+<button aria-label="打开联系人列表" class="iconbtn mobile-contacts" data-action="mobile-contacts"><span data-icon="menu"></span></button>
+<div class="avatar" id="chatAvatar">满</div><div class="chat-title-group"><div class="chat-title"><strong id="chatTitle">小满</strong><span class="status-mini" id="chatStatus">监听中</span></div><div class="chat-subtitle" id="chatSubtitle">每条建议只针对当前联系人</div></div>
+<div class="chat-actions">
+<button class="iconbtn mobile-ai-open" data-action="ai-open" title="打开 AI 咨询"><span data-icon="sparkles"></span></button>
+</div>
+</div>
+<div class="identity-banner hidden" id="identityBanner"><span>该会话的本人/对方方向仍待确认，请先校准后再依据长期记忆作判断。</span><button data-action="drawer" data-tab="identity">去校准 →</button></div>
+<div class="chat-timeline" id="chatTimeline"></div>
+</main>
+<aside class="ai-panel" id="aiPanel">
+<div class="ai-top"><span class="ai-icon" data-icon="sparkles"></span><div class="ai-title"><strong>AI 自由咨询</strong><small>提问、生成回复与深入分析都在这里</small></div><button aria-label="关闭 AI 咨询" class="iconbtn mobile-ai-open" data-action="ai-close"><span data-icon="x"></span></button></div>
+<div class="ai-linked"><span>正在讨论：<strong id="aiContact">小满</strong></span><span class="shared-hint">同一会话共用人设与分析深度</span></div>
+<div class="ai-scroll" id="aiScroll">
+<div class="ai-turns" id="aiTurns"></div>
+<section aria-label="AI 快速问答的回复建议" class="ai-quick-result hidden" id="aiQuickResult">
+<div class="quick-answer-heading"><div><span class="quick-answer-kicker">快速问答 · 三条回复</span><span class="gen-status" id="suggestStatus">等待生成</span></div><button class="small-plain hidden" data-action="cancel-generate" id="cancelGen">取消任务</button></div>
+<div class="quick-answer-note" id="suggestInfo">根据当前聊天生成，点击候选即可复制。</div>
+<div class="suggest-list" id="suggestions"><div class="suggest-placeholder">点击第三个快速提问，即可得到三条可复制建议。</div></div>
+<div class="suggest-progress hidden" id="suggestProgress"><span class="spinner"></span><span id="progressText">正在准备上下文…</span></div>
+</section>
+</div>
+<div class="ai-composer">
+<div class="ai-prompt-presets" aria-label="快速提问预设">
+<button class="question-btn" data-action="ask-example" data-q="对方这次邀约，我怎样回复会自然又不显得敷衍？">如何自然地回应这次邀约？</button>
+<button class="question-btn" data-action="ask-example" data-q="结合我们的聊天，帮我想几个可以继续聊的话题。">帮我找几个继续聊天的话题</button>
+<button class="question-btn is-reply-preset" data-action="generate" id="generateButton"><span data-icon="sparkles"></span><span>生成三条回复最新消息的参考</span></button>
+</div>
+<div class="compose-input-wrap"><textarea aria-label="向 AI 自由提问" id="aiInput" placeholder="围绕当前聊天提问，例如：对方在暗示什么？"></textarea></div>
+<div class="ai-settings-send-row">
+<label class="ai-field"><span>人设</span><select aria-label="当前会话共用人设" id="personaSelect"></select></label>
+<label class="ai-field"><span>分析深度</span><select aria-label="当前会话共用分析深度" id="thinkingSelect"><option value="Quick">快速</option><option value="Balanced">平衡</option><option value="Deep">深度</option><option value="Max">Max · 复核</option></select></label>
+<button class="sendbtn" data-action="ask" id="aiSend" title="发送问题给 AI" aria-label="发送问题给 AI"><span data-icon="send"></span></button>
+</div>
+</div>
+</aside>
+</div>
+<div class="ai-overlay hidden" data-action="ai-close" id="aiOverlay"></div>
+<div class="mobile-side-scrim hidden" data-action="mobile-contacts" id="sideOverlay"></div>
+<!-- Focus mode: the toggle controls ONLY persona/depth/workspace; three suggestions and regenerate remain visible. -->
+<section class="focus-view" id="focusView"><div class="focus-card">
+<div class="focus-top"><button aria-expanded="true" class="focus-expand" data-action="focus-expand" id="focusExpand"><span data-icon="chevron-down"></span><span id="focusExpandText">折叠</span></button><span class="focus-caption" id="focusName">小满 · 只读助手</span></div>
+<div class="focus-details" id="focusDetails">
+<div class="focus-rule"></div>
+<div class="focus-settings">
+<label><span>人设</span><select aria-label="极简模式人设" id="focusPersonaSelect"></select></label>
+<label><span>分析深度</span><select aria-label="极简模式分析深度" id="focusLevelSelect"><option value="Quick">快速</option><option value="Balanced">平衡</option><option value="Deep">深度</option><option value="Max">Max</option></select></label>
+</div>
+<button class="focus-workbench" data-action="workspace"><span data-icon="maximize"></span>打开工作台</button>
+</div>
+<div class="focus-rule"></div>
+<div class="focus-cards" id="focusChoices"></div>
+<div class="focus-status hidden" id="focusStatus"></div>
+<button class="focus-regenerate" data-action="generate"><span data-icon="refresh"></span>换一批</button>
+</div></section>
+<div class="scrim hidden" data-action="close-drawer" id="scrim"></div>
+<section aria-label="应用管理与联系人详情" aria-modal="true" class="drawer hidden" id="drawer" role="dialog">
+<header class="drawer-head"><div class="headgroup"><span class="spark" data-icon="sliders"></span><div><h2>设置中心</h2><small>按照使用场景分类 · 不改变当前聊天</small></div></div><button aria-label="关闭" class="iconbtn" data-action="close-drawer"><span data-icon="x"></span></button></header>
+<div class="drawer-body"><nav aria-label="设置分组" class="drawer-tabs" id="drawerTabs">
+<button class="drawer-tab active" data-action="tab" data-tab="contacts"><span data-icon="users"></span>联系人与会话</button>
+<button class="drawer-tab" data-action="tab" data-tab="ai-settings"><span data-icon="sparkles"></span>AI 与个性化</button>
+<button class="drawer-tab" data-action="tab" data-tab="connections"><span data-icon="settings"></span>连接与设备</button>
+<button class="drawer-tab" data-action="tab" data-tab="app-status"><span data-icon="radio"></span>应用与状态</button>
+</nav><div class="drawer-main" id="drawerContent"></div></div>
+<footer class="drawer-footer">知间 · 本地优先 · 微信只读 · 所有演示数据均为虚构内容</footer>
+</section>
+<div aria-live="polite" class="toast" id="toast" role="status"></div>
+<script type="module" src="/v8/main.js"></script>
+</body>
+</html>
