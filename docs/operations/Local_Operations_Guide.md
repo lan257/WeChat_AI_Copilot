@@ -93,7 +93,7 @@ createdb --host 127.0.0.1 --port 5432 --username <本机数据库管理员> wech
 pg_restore --no-owner --no-privileges --host 127.0.0.1 --port 5432 --username <恢复角色> --dbname wechat_ai_copilot_restore_check 'D:\PrivateBackups\copilot-2026-10-10.dump'
 ```
 
-恢复后将 API 临时连接到恢复库，确认 `/health/ready` 成功、迁移校验无错误，并检查获准会话、记忆与校准状态，再切换服务。首次上线或升级数据库前先做可读回的备份。当前项目没有自动备份计划、异地副本或迁移自动回滚机制；需要定期由操作者完成备份和恢复演练。
+恢复后将 API 临时连接到恢复库，确认 `/health/ready` 成功、迁移校验无错误，并检查获准会话、记忆与校准状态，再切换服务。首次上线或升级数据库前先做可读回的备份。启动器在检测到新迁移时会自动执行 `scripts\Backup-FormData.ps1 -Verify -Keep 10`：完整备份后用 `formal_restore_drill` 库还原并比对行数，失败则中止启动。仍没有定期计划备份、异地副本或迁移自动回滚机制；长期仍需操作者定期手动备份和恢复演练。
 
 ## 7. 迁移失败处理
 
