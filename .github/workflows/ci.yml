@@ -1,0 +1,113 @@
+name: build-and-test
+
+# Two jobs on purpose. The PostgreSQL-gated suites require port 55439 and a database whose name
+# contains "test"; Windows runners do not support service containers, so those tests run on Linux
+# while the shipping artefact is produced on Windows.
+
+on:
+  push:
+    branches: [main, 'feat/**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-app:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Set up Python 3.11 (64-bit)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: x64
+
+      - name: Build Release
+        run: dotnet build WeChatAiCopilot.sln -c Release --nologo
+
+      - name: Unit tests (PostgreSQL-gated suites self-skip without their env vars)
+        run: dotnet test WeChatAiCopilot.sln -c Release --no-build --nologo
+
+      - name: Reader offline tests
+        run: python -m unittest discover -s tests/reader_tests -p 'test_*.py' -v
+
+      - name: Self-contained publish (what a trial machine actually receives)
+        run: >-
+          dotnet publish src/WeChatAiCopilot.Api/WeChatAiCopilot.Api.csproj
+          -c Release -r win-x64 --self-contained true
+          -o artifacts/app/win-x64 --nologo
+
+      - name: Check the published app carries the V8 entry page and assets
+        shell: pwsh
+        run: |
+          $root = 'artifacts/app/win-x64'
+          if (-not (Test-Path "$root/WeChatAiCopilot.Api.exe")) { throw 'published executable missing' }
+          $index = Get-Content "$root/wwwroot/index.html" -Raw
+          if ($index -notmatch '/v8/main\.js') { throw 'published entry page is not the V8 shell' }
+          foreach ($asset in @('wwwroot/v8/main.js', 'wwwroot/v8/chat.js', 'wwwroot/v8/drawers.js', 'wwwroot/v8/styles.css')) {
+            if (-not (Test-Path "$root/$asset")) { throw "published asset missing: $asset" }
+          }
+
+      - name: Check no runtime data or secrets are published
+        shell: pwsh
+        run: |
+          $bad = Get-ChildItem -Path 'artifacts/app/win-x64' -Recurse -File -Include `
+            '*.dump','secrets.json','scope.json','*.pem','*.pfx','appsettings.Production.json' -ErrorAction SilentlyContinue
+          if ($bad) { $bad | ForEach-Object { Write-Host "unexpected file: $($_.Name)" }; throw 'publish output contains runtime data or secrets' }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-win-x64
+          path: artifacts/app/win-x64
+          if-no-files-found: error
+
+  postgres-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        ports:
+          - 55439:5432
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: copilot_ci_test
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      WECHAT_AI_COPILOT_V6_TEST_POSTGRES: 'Host=127.0.0.1;Port=55439;Database=copilot_ci_test;Username=postgres;Password=ci-only-password'
+      WECHAT_AI_COPILOT_M2_TEST_POSTGRES: 'Host=127.0.0.1;Port=55439;Database=copilot_ci_test;Username=postgres;Password=ci-only-password'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Migration-backed integration tests
+        run: dotnet test WeChatAiCopilot.sln -c Release --nologo | tee test-output.txt
+
+      # These suites silently self-skip when their env vars are missing, which would make this job
+      # green without ever touching PostgreSQL. Treat any skip as a failure.
+      - name: Fail if any PostgreSQL-gated test was skipped
+        shell: bash
+        run: |
+          if grep -Eq 'Skipped: +[1-9]|已跳过: +[0-9]{1,}[1-9]' test-output.txt; then
+            grep -E 'Skipped:|已跳过:' test-output.txt
+            echo 'PostgreSQL-gated tests were skipped; the service container or env vars are wrong.'
+            exit 1
+          fi
+          grep -Eq 'Passed!|失败:|Failed!' test-output.txt || { echo 'no test summary found'; exit 1; }
+          echo 'integration tests ran without skips'
