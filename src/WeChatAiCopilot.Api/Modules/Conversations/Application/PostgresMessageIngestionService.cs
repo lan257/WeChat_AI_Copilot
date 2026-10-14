@@ -964,6 +964,49 @@ public sealed class PostgresMessageIngestionService(NpgsqlDataSource dataSource)
             await insertBatch.ExecuteNonQueryAsync(cancellationToken);
         }
 
+        // The scan cursor only advances over rows this transaction has already persisted, so a reader
+        // that dies mid-batch resumes at the last durable position instead of skipping unread messages.
+        const string upsertCheckpointSql = """
+            INSERT INTO copilot.history_scan_checkpoints(
+                account_id,
+                conversation_id,
+                window_key,
+                message_table,
+                last_local_id,
+                scanned_rows,
+                last_job_id)
+            VALUES (@account_id, @conversation_id, @window_key, @message_table, @last_local_id, @scanned_rows, @job_id)
+            ON CONFLICT (account_id, conversation_id, window_key, message_table)
+            DO UPDATE SET last_local_id = GREATEST(copilot.history_scan_checkpoints.last_local_id, EXCLUDED.last_local_id),
+                scanned_rows = copilot.history_scan_checkpoints.scanned_rows + EXCLUDED.scanned_rows,
+                last_job_id = EXCLUDED.last_job_id,
+                updated_at = now();
+            """;
+        var windowKey = HistoryScanWindowV1.Key(range.FromUtc, range.ToUtc);
+        foreach (var progress in (batch.Items ?? Array.Empty<RawMessageEventV1>())
+                     .Select(item => (
+                        item.SourceIdentity?.MessageTable,
+                        LocalId: long.TryParse(item.SourceIdentity?.LocalId, out var localId) ? localId : (long?)null))
+                     .Where(row => row.MessageTable is { Length: > 0 } && row.LocalId is not null)
+                     .GroupBy(row => row.MessageTable!)
+                     .Select(group => new
+                     {
+                         MessageTable = group.Key,
+                         LastLocalId = group.Max(row => row.LocalId!.Value),
+                         Rows = group.Count()
+                     }))
+        {
+            await using var checkpoint = new NpgsqlCommand(upsertCheckpointSql, connection, transaction);
+            checkpoint.Parameters.AddWithValue("account_id", accountId);
+            checkpoint.Parameters.AddWithValue("conversation_id", conversationId);
+            checkpoint.Parameters.AddWithValue("window_key", windowKey);
+            checkpoint.Parameters.AddWithValue("message_table", progress.MessageTable);
+            checkpoint.Parameters.AddWithValue("last_local_id", progress.LastLocalId);
+            checkpoint.Parameters.AddWithValue("scanned_rows", progress.Rows);
+            checkpoint.Parameters.AddWithValue("job_id", batch.JobId!);
+            await checkpoint.ExecuteNonQueryAsync(cancellationToken);
+        }
+
         const string totalsSql = """
             SELECT
                 COALESCE(sum(read_count), 0),

@@ -30,6 +30,8 @@ PROVIDER = "local-wechat"
 MIN_SOURCE_EPOCH = 946684800
 MAX_SOURCE_EPOCH = 4102444800
 MAX_HISTORY_ROWS = 5000
+# A whole-local-store import has no time window; this is the cap the server may hand out for it.
+MAX_FULL_HISTORY_ROWS = 200_000
 MAX_BATCH_SIZE = 500
 MAX_MONITORED_TARGETS = 20
 MAX_DISCOVERY_SESSIONS = 2000
@@ -39,7 +41,7 @@ MAX_DISCOVERY_SESSIONS = 2000
 HISTORY_SCAN_PAGE_ROWS = 500
 # Absolute runaway guard for one job. Reaching it means the source is not behaving like a bounded
 # conversation window, which is a bug to surface rather than an amount to keep scanning.
-HISTORY_JOB_ROW_GUARD = 50_000
+HISTORY_JOB_ROW_GUARD = MAX_FULL_HISTORY_ROWS
 MAX_API_RESPONSE_BYTES = 65536
 TEXT_LOCAL_TYPE = 1
 TABLE_NAME_RE = re.compile(r"^Msg_[0-9a-fA-F]{32}$")
@@ -508,6 +510,23 @@ def _get_history_control(settings: dict[str, Any], path: str) -> dict[str, Any] 
         raise ReaderFailure("READER_HISTORY_POLL_UNAVAILABLE") from None
 
 
+def _resume_cursors(value: Any) -> dict[str, int]:
+    """Parse the server's per-table scan cursors. Anything malformed simply restarts that table."""
+    if not isinstance(value, list):
+        return {}
+    cursors: dict[str, int] = {}
+    for entry in value:
+        if not isinstance(entry, dict):
+            continue
+        table = entry.get("messageTable")
+        last = entry.get("lastLocalId")
+        if not isinstance(table, str) or not table or isinstance(last, bool) or not isinstance(last, int):
+            continue
+        if last >= 0:
+            cursors[table] = last
+    return cursors
+
+
 def _run_queued_history(settings: dict[str, Any], db_module: Any, stop: threading.Event) -> None:
     """Run a claimed job on a separate database instance; realtime stays responsive."""
     job = _get_history_control(settings, "/api/reader/history-jobs/next")
@@ -517,7 +536,7 @@ def _run_queued_history(settings: dict[str, Any], db_module: Any, stop: threadin
             or job.get("accountExternalId") != settings["accountExternalId"]
             or not isinstance(job.get("conversationExternalId"), str)
             or not isinstance(job.get("maximumRows"), int) or isinstance(job["maximumRows"], bool)
-            or not 1 <= job["maximumRows"] <= MAX_HISTORY_ROWS):
+            or not 1 <= job["maximumRows"] <= MAX_FULL_HISTORY_ROWS):
         raise ReaderFailure("READER_HISTORY_RESPONSE_INVALID")
     route = "/api/reader/history-jobs/" + job["jobId"]
     target = job["conversationExternalId"]
@@ -528,8 +547,12 @@ def _run_queued_history(settings: dict[str, Any], db_module: Any, stop: threadin
             raise ReaderFailure("READER_SCOPE_NOT_ALLOWED")
         from_utc = _parse_utc(job.get("fromUtc"), "from-utc")
         to_utc = _parse_utc(job.get("toUtc"), "to-utc")
-        if from_utc is None or to_utc is None or from_utc > to_utc or to_utc - from_utc > dt.timedelta(days=90):
+        # Both ends missing means the whole readable local store; half a window is never valid, and a
+        # bounded window keeps its original 90 day limit.
+        if (from_utc is None) != (to_utc is None) or (from_utc is not None and to_utc is not None
+                and (from_utc > to_utc or to_utc - from_utc > dt.timedelta(days=90))):
             raise ReaderFailure("INVALID_HISTORY_RANGE")
+        resume = _resume_cursors(job.get("resumeCursors"))
         scoped = {**settings, "conversationExternalId": target}
         database, workdir = _open_database(scoped, db_module)
 
@@ -552,7 +575,7 @@ def _run_queued_history(settings: dict[str, Any], db_module: Any, stop: threadin
         # larger than one page finishes instead of being rejected. The final batch is always sent,
         # even when empty, because that is the server's proof the range was fully scanned.
         pending: list[dict[str, Any]] = []
-        for event in _read_history(database, scoped, from_utc, to_utc, job["maximumRows"]):
+        for event in _read_history(database, scoped, from_utc, to_utc, job["maximumRows"], resume):
             pending.append(event)
             if len(pending) >= 100:
                 if not send(pending, False):
@@ -1278,13 +1301,17 @@ def _read_history(
     from_utc: dt.datetime | None,
     to_utc: dt.datetime | None,
     max_rows: int,
+    resume: dict[str, int] | None = None,
 ) -> Iterator[dict[str, Any]]:
     """Yield history events for the requested window using keyset paging.
 
     ``max_rows`` bounds one page of work per shard, not the size of the window. Paging on
     ``local_id`` (the message table's integer primary key) keeps each read cheap and indexable,
     avoids large offsets, and lets a window larger than one page complete instead of aborting.
+    ``resume`` maps a message table to the last ``local_id`` the application already persisted,
+    so an interrupted import continues from that row instead of rescanning from the beginning.
     """
+    resume_from = resume or {}
     page_size = max(1, min(max_rows, HISTORY_SCAN_PAGE_ROWS))
     events_streamed = 0
     connections: list[tuple[sqlite3.Connection, str]] = []
@@ -1295,7 +1322,7 @@ def _read_history(
             for connection, table_value in connections:
                 table = str(table_value)
                 quoted = _quoted_table(table)
-                cursor = -1
+                cursor = resume_from.get(table, -1)
                 while True:
                     where = "local_type=? AND local_id>?"
                     params: list[Any] = [TEXT_LOCAL_TYPE, cursor]
