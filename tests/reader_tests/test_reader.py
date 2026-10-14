@@ -566,6 +566,64 @@ class ReaderContractTests(unittest.TestCase):
         self.assertTrue(all(item["sourceKind"] == "HistoryBackfill"
                             for batch in batches for item in batch["items"]))
 
+    def test_history_scan_pages_beyond_one_page_instead_of_failing(self) -> None:
+        connection = sqlite3.connect(":memory:")
+        connection.row_factory = sqlite3.Row
+        connection.execute(
+            "CREATE TABLE Msg_0123456789abcdef0123456789abcdef (local_id INTEGER PRIMARY KEY, local_type INTEGER, "
+            "real_sender_id INTEGER, create_time INTEGER, message_content TEXT, "
+            "compress_content TEXT, server_id TEXT, sort_seq INTEGER)"
+        )
+        stamp = int(dt.datetime(2026, 10, 9, 2, tzinfo=dt.timezone.utc).timestamp())
+        connection.executemany(
+            "INSERT INTO Msg_0123456789abcdef0123456789abcdef VALUES (?, 1, 73, ?, '合成正文', '', ?, ?)",
+            [(index, stamp, f"server-{index}", 90000 + index) for index in range(1, 1201)],
+        )
+
+        class PagingDatabase:
+            def _msg_conns(self, _conversation: str) -> list[tuple[sqlite3.Connection, str]]:
+                return [(connection, "Msg_0123456789abcdef0123456789abcdef")]
+
+            def _msg_row_to_dict(self, raw: sqlite3.Row) -> dict[str, object]:
+                return dict(raw)
+
+        events = list(reader._read_history(PagingDatabase(), self.settings, None, None, 5000))
+        self.assertEqual(len(events), 1200)
+        self.assertEqual([event["sourceIdentity"]["localId"] for event in events][:3], ["1", "2", "3"])
+        self.assertEqual(events[-1]["sourceIdentity"]["localId"], "1200")
+        connection.close()
+
+    def test_history_scan_time_window_still_bounds_results(self) -> None:
+        connection = sqlite3.connect(":memory:")
+        connection.row_factory = sqlite3.Row
+        connection.execute(
+            "CREATE TABLE Msg_0123456789abcdef0123456789abcdef (local_id INTEGER PRIMARY KEY, local_type INTEGER, "
+            "real_sender_id INTEGER, create_time INTEGER, message_content TEXT, "
+            "compress_content TEXT, server_id TEXT, sort_seq INTEGER)"
+        )
+        october = int(dt.datetime(2026, 10, 9, 2, tzinfo=dt.timezone.utc).timestamp())
+        january = int(dt.datetime(2026, 1, 4, 2, tzinfo=dt.timezone.utc).timestamp())
+        connection.executemany(
+            "INSERT INTO Msg_0123456789abcdef0123456789abcdef VALUES (?, 1, 73, ?, '合成正文', '', ?, ?)",
+            [(1, january, "server-1", 90001), (2, october, "server-2", 90002), (3, october, "server-3", 90003)],
+        )
+
+        class PagingDatabase:
+            def _msg_conns(self, _conversation: str) -> list[tuple[sqlite3.Connection, str]]:
+                return [(connection, "Msg_0123456789abcdef0123456789abcdef")]
+
+            def _msg_row_to_dict(self, raw: sqlite3.Row) -> dict[str, object]:
+                return dict(raw)
+
+        windowed = list(reader._read_history(
+            PagingDatabase(), self.settings,
+            dt.datetime(2026, 6, 1, tzinfo=dt.timezone.utc),
+            dt.datetime(2026, 12, 1, tzinfo=dt.timezone.utc),
+            5000,
+        ))
+        self.assertEqual([event["sourceIdentity"]["localId"] for event in windowed], ["2", "3"])
+        connection.close()
+
     def test_partial_history_receipt_is_reported_without_job_or_message_body(self) -> None:
         receipt = {
             "jobId": "job-offline-test",

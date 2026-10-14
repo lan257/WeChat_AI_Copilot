@@ -33,6 +33,13 @@ MAX_HISTORY_ROWS = 5000
 MAX_BATCH_SIZE = 500
 MAX_MONITORED_TARGETS = 20
 MAX_DISCOVERY_SESSIONS = 2000
+# A single keyset page per shard. This bounds one unit of work; it is no longer the size of the
+# requested window, so a busy three-month range continues from the last local_id instead of
+# failing the whole job.
+HISTORY_SCAN_PAGE_ROWS = 500
+# Absolute runaway guard for one job. Reaching it means the source is not behaving like a bounded
+# conversation window, which is a bug to surface rather than an amount to keep scanning.
+HISTORY_JOB_ROW_GUARD = 50_000
 MAX_API_RESPONSE_BYTES = 65536
 TEXT_LOCAL_TYPE = 1
 TABLE_NAME_RE = re.compile(r"^Msg_[0-9a-fA-F]{32}$")
@@ -525,21 +532,33 @@ def _run_queued_history(settings: dict[str, Any], db_module: Any, stop: threadin
             raise ReaderFailure("INVALID_HISTORY_RANGE")
         scoped = {**settings, "conversationExternalId": target}
         database, workdir = _open_database(scoped, db_module)
-        rows = _read_history(database, scoped, from_utc, to_utc, job["maximumRows"])
-        batches = [rows[index:index + 100] for index in range(0, len(rows), 100)] or [[]]
-        for index, items in enumerate(batches):
+
+        def send(items: list[dict[str, Any]], is_last: bool) -> bool:
             if stop.is_set():
                 raise ReaderFailure("READER_HISTORY_INTERRUPTED")
             control = _get_history_control(settings, route)
             if control is None or control.get("status") != "Running":
-                return
+                return False
             if target not in _get_server_targets(settings)["conversationExternalIds"]:
                 raise ReaderFailure("READER_SCOPE_NOT_ALLOWED")
             _post_contract(settings, route + "/batches", "HistoryBatchV1", {
                 "schemaVersion": 1, "jobId": job["jobId"], "accountExternalId": settings["accountExternalId"],
                 "conversationExternalId": target,
                 "requestedRange": {"fromUtc": _utc_text(from_utc), "toUtc": _utc_text(to_utc)},
-                "items": items, "isLastBatch": index == len(batches) - 1})
+                "items": items, "isLastBatch": is_last})
+            return True
+
+        # Stream the scan into 100-row uploads: peak memory follows the batch size, and a window
+        # larger than one page finishes instead of being rejected. The final batch is always sent,
+        # even when empty, because that is the server's proof the range was fully scanned.
+        pending: list[dict[str, Any]] = []
+        for event in _read_history(database, scoped, from_utc, to_utc, job["maximumRows"]):
+            pending.append(event)
+            if len(pending) >= 100:
+                if not send(pending, False):
+                    return
+                pending = []
+        send(pending, True)
     except ReaderFailure as exc:
         try:
             _post_contract(settings, route + "/fail", "ReaderHistoryFailureV1", {"errorCode": exc.code})
@@ -1253,23 +1272,21 @@ def _query_clause(from_utc: dt.datetime | None, to_utc: dt.datetime | None) -> t
     return predicate
 
 
-def _sort_seq_key(value: str | None) -> tuple[int, Any]:
-    if value is None:
-        return (2, "")
-    try:
-        return (0, int(value))
-    except (TypeError, ValueError):
-        return (1, value)
-
-
 def _read_history(
     database: Any,
     settings: dict[str, Any],
     from_utc: dt.datetime | None,
     to_utc: dt.datetime | None,
     max_rows: int,
-) -> list[dict[str, Any]]:
-    events: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+) -> Iterator[dict[str, Any]]:
+    """Yield history events for the requested window using keyset paging.
+
+    ``max_rows`` bounds one page of work per shard, not the size of the window. Paging on
+    ``local_id`` (the message table's integer primary key) keeps each read cheap and indexable,
+    avoids large offsets, and lets a window larger than one page complete instead of aborting.
+    """
+    page_size = max(1, min(max_rows, HISTORY_SCAN_PAGE_ROWS))
+    events_streamed = 0
     connections: list[tuple[sqlite3.Connection, str]] = []
     try:
         with _quiet_upstream_output():
@@ -1278,40 +1295,43 @@ def _read_history(
             for connection, table_value in connections:
                 table = str(table_value)
                 quoted = _quoted_table(table)
-                where = "local_type=?"
-                params: list[Any] = [TEXT_LOCAL_TYPE]
-                if time_clause is not None:
-                    where += " AND " + time_clause[0]
-                    params.extend(time_clause[1])
-                params.append(max_rows + 1)
-                raw_rows = connection.execute(
-                    "SELECT local_id, local_type, real_sender_id, create_time, message_content, "
-                    "compress_content, server_id, sort_seq "
-                    f"FROM {quoted} WHERE {where} ORDER BY sort_seq ASC, local_id ASC LIMIT ?",
-                    params,
-                ).fetchall()
-                if len(raw_rows) > max_rows:
-                    raise ReaderFailure("HISTORY_ROW_LIMIT_EXCEEDED")
-                for raw in raw_rows:
-                    normalized = database._msg_row_to_dict(raw)
-                    source_time = _timestamp(raw["create_time"])
-                    if from_utc is not None and (source_time is None or source_time < from_utc):
-                        continue
-                    if to_utc is not None and (source_time is None or source_time > to_utc):
-                        continue
-                    identity = _source_identity_from_raw(
-                        settings["accountExternalId"], connection, table, raw
-                    )
-                    event = _raw_event(settings, "HistoryBackfill", normalized, identity)
-                    sort_key = (
-                        source_time or dt.datetime.min.replace(tzinfo=dt.timezone.utc),
-                        _sort_seq_key(identity["sortSeq"]),
-                        identity["shardFingerprint"] or "",
-                        identity["localId"] or "",
-                    )
-                    events.append((sort_key, event))
-                    if len(events) > max_rows:
-                        raise ReaderFailure("HISTORY_ROW_LIMIT_EXCEEDED")
+                cursor = -1
+                while True:
+                    where = "local_type=? AND local_id>?"
+                    params: list[Any] = [TEXT_LOCAL_TYPE, cursor]
+                    if time_clause is not None:
+                        where += " AND " + time_clause[0]
+                        params.extend(time_clause[1])
+                    params.append(page_size)
+                    raw_rows = connection.execute(
+                        "SELECT local_id, local_type, real_sender_id, create_time, message_content, "
+                        "compress_content, server_id, sort_seq "
+                        f"FROM {quoted} WHERE {where} ORDER BY local_id ASC LIMIT ?",
+                        params,
+                    ).fetchall()
+                    if not raw_rows:
+                        break
+                    for raw in raw_rows:
+                        source_time = _timestamp(raw["create_time"])
+                        if from_utc is not None and (source_time is None or source_time < from_utc):
+                            continue
+                        if to_utc is not None and (source_time is None or source_time > to_utc):
+                            continue
+                        normalized = database._msg_row_to_dict(raw)
+                        identity = _source_identity_from_raw(
+                            settings["accountExternalId"], connection, table, raw
+                        )
+                        events_streamed += 1
+                        if events_streamed > HISTORY_JOB_ROW_GUARD:
+                            raise ReaderFailure("HISTORY_JOB_ROW_GUARD_EXCEEDED")
+                        yield _raw_event(settings, "HistoryBackfill", normalized, identity)
+                    last_id = raw_rows[-1]["local_id"]
+                    try:
+                        cursor = int(last_id)
+                    except (TypeError, ValueError):
+                        raise ReaderFailure("HISTORY_SCAN_CURSOR_INVALID") from None
+                    if len(raw_rows) < page_size:
+                        break
     except ReaderFailure:
         raise
     except Exception:
@@ -1323,8 +1343,31 @@ def _read_history(
             except Exception:
                 pass
 
-    events.sort(key=lambda item: item[0])
-    return [event for _, event in events]
+
+def _post_history_batch(
+    settings: dict[str, Any],
+    job_id: str,
+    from_utc: dt.datetime | None,
+    to_utc: dt.datetime | None,
+    items: list[dict[str, Any]],
+    is_last_batch: bool,
+) -> None:
+    batch = {
+        "schemaVersion": 1,
+        "jobId": job_id,
+        "accountExternalId": settings["accountExternalId"],
+        "conversationExternalId": settings["conversationExternalId"],
+        "requestedRange": {
+            "fromUtc": _utc_text(from_utc),
+            "toUtc": _utc_text(to_utc),
+        },
+        "items": items,
+        "isLastBatch": is_last_batch,
+    }
+    if settings["transport"]["enabled"]:
+        _post_contract(settings, "/api/reader/history-batches", "HistoryBatchV1", batch)
+    else:
+        _emit_json_line(batch)
 
 
 def _run_history(args: argparse.Namespace, settings: dict[str, Any], db_module: Any) -> None:
@@ -1343,32 +1386,16 @@ def _run_history(args: argparse.Namespace, settings: dict[str, Any], db_module: 
 
     database, workdir = _open_database(settings, db_module)
     try:
-        rows = _read_history(database, settings, from_utc, to_utc, args.max_rows)
-        batches = [rows[index:index + args.batch_size] for index in range(0, len(rows), args.batch_size)]
-        if not batches:
-            batches = [[]]
-        for index, items in enumerate(batches):
-            batch = {
-                "schemaVersion": 1,
-                "jobId": args.job_id,
-                "accountExternalId": settings["accountExternalId"],
-                "conversationExternalId": settings["conversationExternalId"],
-                "requestedRange": {
-                    "fromUtc": _utc_text(from_utc),
-                    "toUtc": _utc_text(to_utc),
-                },
-                "items": items,
-                "isLastBatch": index == len(batches) - 1,
-            }
-            if settings["transport"]["enabled"]:
-                _post_contract(
-                    settings,
-                    "/api/reader/history-batches",
-                    "HistoryBatchV1",
-                    batch,
-                )
-            else:
-                _emit_json_line(batch)
+        # Upload as the scan progresses so peak memory follows the batch size rather than the size
+        # of the requested window. The final batch is always sent, even when it is empty, because
+        # that is what tells the server this range has been fully scanned.
+        pending: list[dict[str, Any]] = []
+        for event in _read_history(database, settings, from_utc, to_utc, args.max_rows):
+            pending.append(event)
+            if len(pending) >= args.batch_size:
+                _post_history_batch(settings, args.job_id, from_utc, to_utc, pending, False)
+                pending = []
+        _post_history_batch(settings, args.job_id, from_utc, to_utc, pending, True)
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 
