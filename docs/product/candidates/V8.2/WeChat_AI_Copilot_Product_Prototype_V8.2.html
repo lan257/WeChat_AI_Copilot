@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1, viewport-fit=cover" name="viewport"/>
+<meta content="light" name="color-scheme"/>
+<title>知间 · 微信 AI 沟通助手 · 产品交互原型 V8 · 极简回复与 AI 输入优化</title>
+<style>
+:root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;--ink:#24333a;--ink2:#41545c;--sub:#778991;--muted:#9aa7a9;--bg:#edf2f1;--paper:#fff;--border:#e6ecea;--green:#167e74;--green-dark:#08685f;--green-pale:#e6f5f0;--warm:#faefe1;--orange:#b16e29;--red:#c55c50;--shadow:0 18px 55px rgba(28,63,57,.09);color:var(--ink);background:var(--bg);font-size:14px;-webkit-font-smoothing:antialiased}
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;min-width:240px}button,input,textarea,select{font:inherit}button{cursor:pointer;color:inherit}button:disabled{opacity:.48;cursor:not-allowed}input,textarea,select{outline:none}button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:3px solid #a4ddd1;outline-offset:2px}button{border:0;background:transparent}svg{display:block} .hidden{display:none!important}.sr{position:absolute;clip:rect(0,0,0,0);width:1px;height:1px;overflow:hidden}
+#app{height:100dvh;min-height:0;display:flex;flex-direction:column;overflow:hidden}.topbar{height:66px;flex:0 0 66px;background:#ffffffeb;border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 23px;justify-content:space-between;gap:16px;z-index:6}.brand{display:flex;align-items:center;gap:11px;white-space:nowrap}.brandmark{display:grid;place-items:center;width:38px;height:38px;background:linear-gradient(145deg,#22998c,#0b665e);color:#fff;border-radius:12px;box-shadow:0 6px 14px #147e742c;font-size:21px;font-weight:700}.brandname{font-size:19px;font-weight:790;letter-spacing:-.8px}.brandtag{font-size:11px;color:var(--sub);letter-spacing:.3px;margin-left:4px}.topright{display:flex;align-items:center;gap:12px}.demo-pill{display:flex;gap:6px;align-items:center;font-size:11px;font-weight:700;white-space:nowrap;color:#7d6b46;background:#fff4dc;border:1px solid #f2e3c3;padding:7px 10px;border-radius:99px}.demo-dot{width:6px;height:6px;border-radius:100%;background:#d6a354}.top-chip{font-size:12px;color:var(--ink2);border:1px solid var(--border);border-radius:10px;background:#fff;padding:9px 12px;display:flex;align-items:center;gap:7px;white-space:nowrap}.top-chip:hover,.iconbtn:hover{border-color:#c7dfd8;background:#f7fbfa}.primary{display:inline-flex;align-items:center;justify-content:center;gap:7px;background:var(--green);color:white;border:1px solid var(--green);border-radius:10px;font-weight:700;padding:10px 15px;min-height:38px}.primary:hover{background:var(--green-dark)}.primary:disabled{background:#91aaa3;border-color:#91aaa3;color:#fff}.secondary{display:inline-flex;align-items:center;justify-content:center;gap:6px;border:1px solid #dfeae6;border-radius:10px;padding:9px 12px;background:#fff;color:#526c65;font-weight:650}.secondary:hover{background:#f0f9f5}.textbtn{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:650;color:var(--green);padding:7px 0}.textbtn:hover{text-decoration:underline}.iconbtn{width:36px;height:36px;border:1px solid transparent;display:grid;place-items:center;border-radius:10px;flex:0 0 auto}.iconbtn svg{width:19px;height:19px}.app-body{flex:1;min-height:0;display:grid;grid-template-columns:274px minmax(390px,1fr) 370px;overflow:hidden;background:#fff}
+/* Contacts, not technical modules, own the primary navigation. */
+.sidebar{background:#fafcfb;border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0;min-width:0}.side-top{padding:20px 15px 12px;border-bottom:1px solid var(--border)}.subhead{font-size:10px;text-transform:uppercase;color:#a0acaa;letter-spacing:1.65px;font-weight:800;margin:0 0 9px 8px}.account-select-wrap{position:relative;display:flex;align-items:center;gap:10px;background:#fff;border:1px solid var(--border);border-radius:13px;padding:11px 12px}.account-logo{width:34px;height:34px;border-radius:11px;background:#e0f2eb;color:#116e65;display:grid;place-items:center;font-weight:800;font-size:14px;flex:0 0 auto}.accopy{min-width:0;flex:1}.accopy strong{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px}.accopy small{display:block;margin-top:4px;font-size:11px;color:var(--sub)}.account-select-wrap select{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}.account-chev{color:#99a6a3}.side-search{display:flex;align-items:center;gap:9px;background:#eff4f2;border-radius:10px;margin-top:14px;padding:0 12px;height:40px;color:#93a4a0}.side-search input{border:0;background:none;width:100%;min-width:0;color:var(--ink);font-size:13px}.side-search input::placeholder{color:#98a7a4}.list-controls{display:flex;align-items:center;justify-content:space-between;padding:14px 18px 9px}.list-controls strong{font-size:13px}.filter-group{display:flex;gap:2px;padding:3px;background:#eff3f1;border-radius:9px}.filter-group button{font-size:11px;padding:5px 8px;border-radius:7px;color:var(--sub);white-space:nowrap}.filter-group button.active{background:white;color:var(--green-dark);box-shadow:0 1px 3px #1f51491c;font-weight:750}.conv-list{overflow-y:auto;min-height:0;flex:1;padding:0 8px 12px;scrollbar-width:thin}.conv-row{width:100%;display:flex;align-items:center;gap:10px;padding:12px 10px;margin:2px 0;border-radius:12px;text-align:left;border:1px solid transparent;position:relative}.conv-row:hover{background:#f1f7f4}.conv-row.selected{background:#e9f6f0;border-color:#d5ece2}.avatar{position:relative;width:42px;height:42px;flex:0 0 auto;display:grid;place-items:center;border-radius:14px;background:var(--av,#d9ece7);color:var(--avink,#2f7771);font-size:16px;font-weight:750}.avatar .live-mini{position:absolute;right:-2px;bottom:-2px;width:12px;height:12px;border:2px solid #fff;border-radius:100%;background:#42ad83}.avatar .offline-mini{background:#c3cac9}.conv-content{flex:1;min-width:0}.conv-first{display:flex;justify-content:space-between;align-items:center;gap:7px}.conv-first strong{font-size:13px;font-weight:750;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.conv-time{font-size:10px;color:#9ba9a8;flex:0 0 auto}.conv-second{display:flex;gap:7px;justify-content:space-between;align-items:center;margin-top:6px}.conv-preview{font-size:11px;color:#849594;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}.unread{flex:0 0 auto;background:#de826d;color:#fff;min-width:17px;height:17px;padding:0 5px;line-height:17px;border-radius:99px;font-size:10px;font-weight:700;text-align:center}.side-bottom{border-top:1px solid var(--border);padding:12px 14px 16px;display:grid;gap:10px;background:#fff}.listen-summary{display:flex;align-items:center;justify-content:space-between;color:var(--ink2);font-size:12px}.live-light{display:inline-block;width:7px;height:7px;background:#27a078;border-radius:50%;margin-right:6px;box-shadow:0 0 0 3px #ddf3e8}.side-actions{display:flex;gap:8px}.side-actions button{flex:1;min-width:0;padding:9px 7px;font-size:12px}
+/* Conversation is the center of the product. */
+.chat-section{display:flex;flex-direction:column;min-width:0;min-height:0;background:#fff}.chat-header{height:75px;flex:0 0 75px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;padding:0 22px;min-width:0}.chat-header .avatar{width:40px;height:40px;border-radius:13px}.chat-title-group{min-width:0;flex:1}.chat-title{display:flex;align-items:center;gap:8px}.chat-title strong{font-size:16px;font-weight:750;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.status-mini{font-size:10px;padding:4px 7px;border-radius:6px;background:#e9f7f0;color:#298266;white-space:nowrap}.status-mini.off{background:#f3f4f3;color:#899797}.chat-subtitle{font-size:11px;color:var(--sub);margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.chat-actions{display:flex;align-items:center;gap:5px}.chat-divider{height:22px;width:1px;background:var(--border);margin:0 3px}.chat-timeline{flex:1 1 0;min-height:90px;overflow:auto;background:linear-gradient(180deg,#fafdfb,#f7fbf9 85%);padding:21px 26px 20px;scrollbar-color:#cedcd6 transparent;scrollbar-width:thin;overscroll-behavior:contain}.history-load{display:flex;justify-content:center;margin:0 auto 20px}.history-load button{border:1px solid #e6edeb;background:#fff;border-radius:99px;padding:7px 13px;color:#739087;font-size:11px}.date-line{display:flex;align-items:center;justify-content:center;gap:10px;color:#a1adaa;font-size:11px;margin:0 0 21px}.date-line:before,.date-line:after{content:"";height:1px;background:#e9eeec;width:55px}.bubble-row{display:flex;align-items:flex-end;gap:9px;margin:0 0 16px;max-width:100%}.bubble-row.mine{justify-content:flex-end}.bubble-row .avatar{width:28px;height:28px;border-radius:10px;font-size:11px;margin-bottom:3px}.bubble-wrap{display:flex;flex-direction:column;align-items:flex-start;min-width:0;max-width:min(77%,440px)}.mine .bubble-wrap{align-items:flex-end}.bubble{background:#fff;border:1px solid #e5ece9;border-radius:14px 14px 14px 4px;padding:11px 13px;line-height:1.64;overflow-wrap:anywhere;white-space:pre-wrap;color:#33484a;font-size:13.5px;box-shadow:0 2px 8px #294f4110}.mine .bubble{border-color:#d5ebe2;background:#e0f4eb;border-radius:14px 14px 4px 14px;color:#1a534b}.bubble-time{font-size:10px;color:#a3b1ad;margin:5px 3px 0}.identity-banner{display:flex;align-items:center;justify-content:space-between;gap:7px;padding:8px 14px;background:#fff9ec;border-bottom:1px solid #f5edd9;color:#956b39;font-size:11px}.identity-banner button{color:#966426;font-weight:800;font-size:11px;white-space:nowrap}
+/* Suggestions are always visible near the reading context; AI consultation is independent. */
+.suggest-dock{flex:0 0 auto;max-height:48%;overflow-y:auto;border-top:1px solid #e3ece8;padding:13px 20px 16px;background:#fff;box-shadow:0 -7px 26px rgba(19,67,54,.03)}.suggest-bar{display:flex;align-items:center;justify-content:space-between;gap:10px}.section-mini-title{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:750}.spark{width:25px;height:25px;border-radius:8px;color:var(--green);background:#e9f6f0;display:grid;place-items:center}.gen-status{font-size:11px;color:var(--sub);display:flex;align-items:center;gap:5px}.gen-status.stale{color:#b87d39}.suggest-settings{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.pill-select{border:1px solid #e2eae7;border-radius:8px;padding:6px 26px 6px 8px;background:#f9fbfa;font-size:11px;color:#4a625a;max-width:138px}.small-primary{background:var(--green);color:#fff;padding:7px 13px;border-radius:8px;font-size:11px;font-weight:750;white-space:nowrap}.small-primary:hover{background:var(--green-dark)}.small-plain{font-size:11px;color:#788c83;padding:6px}.suggest-info{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:8px 0;font-size:11px;color:#85958e}.suggest-info em{font-style:normal;color:var(--orange);font-weight:650}.suggest-list{display:grid;gap:6px}.suggest-card{display:flex;align-items:center;gap:9px;width:100%;padding:8px 10px;border:1px solid #e9efeb;background:#fbfdfc;border-radius:10px;text-align:left;min-height:43px;transition:background .15s,border-color .15s}.suggest-card:hover{background:#eaf7ef;border-color:#b6dbca}.suggest-label{flex:0 0 auto;color:#188572;background:#e8f6f0;border-radius:6px;font-size:10px;font-weight:700;padding:5px 7px}.suggest-text{flex:1;font-size:12px;color:#3b5251;line-height:1.48;overflow-wrap:anywhere}.copy-mark{color:#299782;font-size:10px;font-weight:750;flex:0 0 auto}.suggest-placeholder{padding:20px;border:1px dashed #dce9e3;background:#fbfdfb;border-radius:12px;color:#869791;font-size:12px;line-height:1.6;text-align:center}.suggest-progress{margin-top:9px;color:var(--green);font-size:11px;display:flex;align-items:center;gap:8px}.spinner{width:12px;height:12px;border:2px solid #d0e8de;border-top-color:var(--green);border-radius:100%;animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
+/* AI panel is a continuous conversation, not a configuration form. */
+.ai-panel{border-left:1px solid var(--border);background:#fff;min-width:0;min-height:0;display:flex;flex-direction:column}.ai-top{height:75px;min-height:75px;padding:17px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px}.ai-icon{width:35px;height:35px;border-radius:12px;background:linear-gradient(140deg,#d8f2e8,#eaf5ff);display:grid;place-items:center;color:#188477;font-size:19px}.ai-title{flex:1;min-width:0}.ai-title strong{font-size:14px;display:block}.ai-title small{display:block;margin-top:4px;color:var(--sub);font-size:11px}.ai-linked{border-bottom:1px solid #eef2f1;padding:11px 17px;display:flex;align-items:center;justify-content:space-between;gap:9px;color:#7d8e8a;font-size:11px}.ai-linked strong{color:#3a665b}.ai-scroll{flex:1;min-height:0;overflow:auto;padding:18px 18px 15px;scrollbar-width:thin;scrollbar-color:#d3dcd7 transparent}.ai-welcome{background:linear-gradient(145deg,#eef9f2,#f6faf8);border:1px solid #deeee6;border-radius:14px;padding:15px;margin-bottom:13px}.ai-welcome strong{font-size:13px}.ai-welcome p{font-size:12px;line-height:1.65;color:#668179;margin:7px 0 0}.question-btn{text-align:left;border:1px solid #e9eeeb;border-radius:9px;padding:9px 11px;color:#637b76;font-size:11px;background:#fff}.question-btn:hover{border-color:#b3dace;color:#11695c;background:#f4faf6}.ai-turn{margin:14px 0}.ai-turn.user{display:flex;justify-content:flex-end}.ai-turn.user>div{background:#eaf3f0;color:#375a52;max-width:94%;padding:10px 12px;border-radius:12px 12px 4px 12px;font-size:12px;line-height:1.6;white-space:pre-wrap}.ai-turn.assistant>div{max-width:100%;font-size:12px;line-height:1.75;color:#405652;white-space:pre-wrap;padding:5px 1px}.ai-speaker{font-size:11px;font-weight:750;color:#418b75;display:flex;align-items:center;gap:6px;margin-bottom:6px}.ai-citation{display:inline-block;border:1px solid #dceae3;color:#709386;background:#f9fcf9;padding:4px 7px;border-radius:7px;font-size:10px;margin-top:7px}.ai-composer{border-top:1px solid var(--border);padding:12px 16px 14px;display:grid;gap:8px;background:#fff}.ai-composer textarea{resize:none;width:100%;height:72px;border:1px solid #dee9e4;border-radius:11px;padding:12px;background:#fafdfb;color:#263e36;font-size:13px;line-height:1.5}.ai-composer textarea::placeholder{color:#a0afaa}.composer-footer{display:flex;align-items:center;justify-content:space-between;gap:10px}.composer-meta{display:flex;align-items:center;gap:7px;color:#9ca9a5;font-size:11px}.composer-footer select{color:#406b5f;font-size:11px;border:0;background:#eff6f2;border-radius:7px;padding:7px 9px}.sendbtn{width:36px;height:35px;background:var(--green);color:white;display:grid;place-items:center;border-radius:10px}.sendbtn svg{width:17px;height:17px}.sendbtn:disabled{background:#b8c7c1}
+/* Slide-in product management drawer. */
+.scrim{position:fixed;inset:0;background:rgba(15,38,35,.30);z-index:20;backdrop-filter:blur(2px)}.drawer{position:fixed;z-index:21;right:0;top:0;bottom:0;width:min(760px,100%);display:flex;flex-direction:column;background:#fff;box-shadow:-24px 0 90px #162d302c}.drawer-head{height:72px;min-height:72px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);padding:0 26px}.drawer-head .headgroup{display:flex;gap:10px;align-items:center}.drawer-head h2{font-size:17px;margin:0}.drawer-head small{color:var(--sub);font-size:11px;display:block;margin-top:4px}.drawer-body{display:grid;grid-template-columns:180px minmax(0,1fr);flex:1;min-height:0}.drawer-tabs{background:#f7faf8;border-right:1px solid var(--border);padding:19px 11px;display:flex;flex-direction:column;gap:5px}.drawer-tab{text-align:left;padding:12px;border-radius:10px;color:#71877e;font-size:12px;display:flex;align-items:center;gap:9px}.drawer-tab.active{background:#e4f3eb;color:var(--green-dark);font-weight:750}.drawer-main{overflow-y:auto;padding:27px 29px 40px;scrollbar-width:thin}.drawer-main h3{font-size:18px;letter-spacing:-.3px;margin:0 0 8px}.drawer-main .intro{font-size:12px;line-height:1.7;color:#84968e;margin:0 0 24px}.group-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:22px 0 9px;font-size:13px;font-weight:750}.setting-card{padding:16px;border-radius:13px;border:1px solid var(--border);background:#fff;margin:9px 0;display:flex;align-items:center;gap:13px}.setting-card .setting-main{min-width:0;flex:1}.setting-card strong{display:block;font-size:13px}.setting-card p{color:var(--sub);font-size:11px;line-height:1.6;margin:5px 0 0}.setting-card .avatar{width:38px;height:38px}.setting-actions{display:flex;align-items:center;gap:6px}.toggle{width:40px;height:24px;border-radius:99px;background:#cbd8d3;padding:3px;transition:background .2s;flex:0 0 auto}.toggle::after{content:"";display:block;background:white;border-radius:50%;height:18px;width:18px;transition:transform .2s}.toggle.on{background:var(--green)}.toggle.on::after{transform:translateX(16px)}.stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.stat-item{padding:16px 12px;border:1px solid var(--border);border-radius:12px;background:#fafdfa}.stat-item strong{display:block;font-size:21px;color:#2e7261}.stat-item span{display:block;margin-top:7px;color:var(--sub);font-size:11px}.notice{border-radius:11px;padding:12px 14px;background:#f0f8f4;color:#5d8070;font-size:12px;line-height:1.7;border:1px solid #e0f0e7}.notice.warn{background:#fff9ee;color:#8b6c3f;border-color:#f3e8d5}.form-field{width:100%;border:1px solid #dde9e2;border-radius:10px;background:#fff;padding:10px 12px;min-height:39px}.memory-cards{display:grid;gap:9px}.memory-card{background:#fafcfa;border:1px solid #e4eee7;border-radius:12px;padding:13px}.memory-card .meta{display:flex;align-items:center;justify-content:space-between;color:#80978b;font-size:10px;margin-bottom:8px}.memory-card strong{font-size:12px}.memory-card p{font-size:12px;line-height:1.7;margin:0 0 9px}.memory-card .evidence{font-size:10px;color:#78978b;background:#f0f7f2;border-radius:7px;padding:6px 8px}.memory-card button{font-size:11px;color:#c26859}.activity-row{display:flex;align-items:center;gap:11px;padding:13px 4px;border-bottom:1px solid #eef2ef}.activity-row strong{font-size:12px}.activity-row span{display:block;font-size:11px;color:#85968e;margin-top:4px}.progress-track{height:7px;border-radius:99px;background:#e7efe9;overflow:hidden}.progress-fill{height:100%;background:var(--green);transition:width .4s}.mini-mono{font-family:ui-monospace,SFMono-Regular,monospace;font-size:11px;color:#718782}.drawer-footer{border-top:1px solid var(--border);padding:12px 26px;color:#a0aea7;font-size:11px}
+/* Deliberately tiny focus surface. Font does not collapse to 8px. */
+.focus-mode .topbar,.focus-mode .app-body{display:none}.focus-view{display:none;flex:1;min-height:0;background:#eaf2ee;overflow-y:auto;padding:12px;align-items:flex-start;justify-content:center}.focus-mode .focus-view{display:flex}.focus-card{max-width:520px;width:100%;min-width:0;background:white;border:1px solid #dce9e3;box-shadow:0 8px 30px #406b5520;border-radius:14px;padding:12px;display:grid;gap:9px}.focus-top{display:flex;align-items:center;justify-content:space-between;gap:8px}.focus-expand{color:#4b8276;font-size:12px;font-weight:750;display:flex;align-items:center;gap:5px;min-height:30px}.focus-caption{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#8a9b93;text-align:right;font-size:11px}.focus-cards{display:grid;gap:7px}.focus-choice{width:100%;display:flex;gap:8px;align-items:flex-start;text-align:left;padding:10px 10px;border:1px solid #e4ece8;background:#fbfefc;border-radius:10px;min-height:57px}.focus-choice:hover{border-color:#9dd4b9;background:#f1fbf5}.focus-choice .num{flex:0 0 auto;width:20px;height:20px;border-radius:6px;display:grid;place-items:center;background:#e5f5eb;color:#278369;font-size:11px;font-weight:750}.focus-choice .words{flex:1;min-width:0;color:#345149;font-size:13px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}.focus-choice .tick{color:#368c72;opacity:.8;font-size:10px;margin-top:3px}.focus-controls{display:grid;grid-template-columns:1fr 1fr;gap:8px}.focus-control{border:1px solid #dcebe3;background:#f6faf7;color:#4a786a;padding:9px 7px;border-radius:9px;min-height:39px;font-size:12px;font-weight:700;display:flex;justify-content:center;align-items:center;gap:7px}.focus-empty{padding:24px 12px;text-align:center;line-height:1.65;font-size:12px;color:#7a9188}.focus-details{border-top:1px solid var(--border);padding-top:10px;display:grid;gap:9px}.focus-details p{font-size:11px;color:var(--sub);line-height:1.6;margin:0}.focus-status{color:var(--green);font-size:11px;text-align:center}.toast{position:fixed;z-index:50;bottom:24px;left:50%;transform:translate(-50%,16px);background:#213e39;color:#fff;border-radius:11px;padding:12px 17px;font-size:12px;box-shadow:0 12px 30px #1f403b3d;opacity:0;pointer-events:none;transition:.2s}.toast.show{opacity:1;transform:translate(-50%,0)}.floating-help{position:fixed;bottom:14px;right:15px;z-index:7;border:1px solid #d8e9de;background:#fff;color:#417766;box-shadow:0 7px 20px #1c503c18;font-size:11px;padding:10px 12px;border-radius:99px;display:flex;gap:6px;align-items:center}.focus-mode .floating-help{display:none}
+@media(max-width:1250px){.app-body{grid-template-columns:243px minmax(360px,1fr) 330px}.chat-header{padding:0 16px}.topbar{padding:0 16px}.suggest-dock{padding:10px 13px 13px}.chat-timeline{padding:18px}.ai-top{padding:14px}.ai-scroll{padding:14px}.ai-composer{padding:12px}}
+@media(max-width:1040px){.app-body{grid-template-columns:240px minmax(0,1fr)}.ai-panel{position:fixed;z-index:10;top:66px;bottom:0;right:0;width:min(400px,100%);box-shadow:-12px 0 45px #163b2b21;transform:translateX(101%);transition:transform .22s}.ai-panel.open{transform:translateX(0)}.ai-overlay{position:fixed;z-index:9;inset:66px 0 0;background:#163c2b2b}.chat-section{min-width:0}.top-chip.hide-med{display:none}.mobile-ai-open{display:grid}}
+@media(min-width:1041px){.mobile-ai-open{display:none}}.mobile-contacts{display:none}
+@media(max-width:690px){.topbar{height:55px;flex-basis:55px;padding:0 12px}.brandmark{height:32px;width:32px;border-radius:10px;font-size:17px}.brandname{font-size:17px}.brandtag,.top-chip .label,.top-chip.hide-mobile,.demo-pill{display:none}.topright{gap:5px}.top-chip{padding:8px 9px}.app-body{display:flex}.sidebar{position:fixed;top:55px;bottom:0;left:0;width:min(325px,100%);z-index:14;transform:translateX(-101%);box-shadow:16px 0 35px #113f2c22;transition:transform .2s}.sidebar.open{transform:translateX(0)}.mobile-side-scrim{position:fixed;z-index:13;inset:55px 0 0;background:#18362840}.mobile-contacts{display:grid}.chat-section{flex:1;width:100%;min-width:0}.chat-header{height:61px;flex-basis:61px;padding:0 11px;gap:7px}.chat-title strong{font-size:14px}.chat-subtitle{font-size:10px}.chat-header .avatar{width:35px;height:35px;font-size:13px}.chat-actions{gap:0}.chat-actions .hide-mobile{display:none}.chat-divider{display:none}.chat-timeline{padding:16px 12px}.bubble-wrap{max-width:85%}.bubble{font-size:13px}.suggest-dock{padding:10px 11px 12px;max-height:50%}.suggest-bar{align-items:flex-start;gap:7px;flex-wrap:wrap}.suggest-settings{width:100%;justify-content:flex-end}.suggest-info{margin:6px 0}.suggest-card{min-height:45px;padding:8px}.suggest-text{font-size:12px}.ai-panel{top:55px;width:100%}.ai-overlay{inset:55px 0 0}.drawer-head{padding:0 17px}.drawer-body{display:flex;flex-direction:column}.drawer-tabs{display:flex;flex-direction:row;overflow-x:auto;flex:0 0 auto;padding:9px;scrollbar-width:none}.drawer-tab{white-space:nowrap;padding:9px 10px}.drawer-main{padding:20px 16px 33px}.drawer-footer{padding:9px 16px}.stat-grid{gap:6px}.stat-item{padding:12px 8px}.stat-item strong{font-size:17px}}
+@media(max-width:350px){.top-chip{padding:8px}.chat-actions .iconbtn{width:33px}.chat-title strong{max-width:105px}.suggest-settings{gap:4px}.pill-select{max-width:105px;padding:6px 4px}.small-primary{padding:8px 9px}.focus-view{padding:6px}.focus-card{padding:9px;gap:7px}.focus-choice{padding:9px 7px;gap:6px}.focus-choice .words{font-size:12px}.focus-control{font-size:11px}}
+@media(prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important;transition:none!important}}
+
+/* V5: portraits & first-run guided connection center */
+
+.portrait-hero{display:flex;align-items:center;gap:15px;padding:18px;border:1px solid #e2ede8;border-radius:16px;background:linear-gradient(115deg,#f6fbf7,#e9f7f0);margin:0 0 15px}
+.portrait-hero .avatar{width:57px;height:57px;font-size:20px}
+.portrait-hero strong{display:block;font-size:18px;margin-bottom:3px}
+.portrait-hero p{color:#798b86;margin:0 0 7px;font-size:12px}
+.portrait-mark{display:inline-flex;align-items:center;min-height:23px;padding:4px 9px;border-radius:99px;font-size:10px;font-weight:700;background:#dbf3e5;color:#27825f}
+.portrait-mark.is-warn{background:#fff1da;color:#996b36}
+.portrait-summary{border:1px solid #ddebe3;border-radius:14px;background:#f7fbf8;padding:18px;margin-bottom:13px}
+.portrait-kicker{text-transform:uppercase;font-size:10px;letter-spacing:1px;color:#50977b;font-weight:800;margin-bottom:9px}
+.portrait-summary p{font-size:14px;line-height:1.75;font-weight:570;margin:0 0 10px;color:#36554b}
+.portrait-source{color:#85978b;font-size:11px}
+.portrait-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:14px 0}
+.portrait-section{border:1px solid #e6eeea;background:#fff;padding:15px;border-radius:13px;min-height:110px}
+.portrait-section h4{font-size:12px;color:#496b59;margin:0 0 12px}
+.portrait-item{display:flex;align-items:flex-start;gap:8px;margin:7px 0;font-size:12px;line-height:1.55}
+.portrait-bullet{width:6px;height:6px;flex:0 0 6px;margin-top:7px;border-radius:50%;background:#5baf8d}
+.portrait-empty{font-size:11px;color:#8f9e98;margin:0;line-height:1.7}
+.drawer-tabs{overflow-y:auto;scrollbar-width:thin}
+.setup-progress{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:17px}
+.setup-step{border:1px solid #e0e9e3;border-radius:12px;background:#fff;min-height:88px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:8px 5px}
+.setup-step span{width:28px;height:28px;border-radius:50%;background:#edf3ef;color:#718b80;display:grid;place-items:center;font-size:12px;font-weight:800}
+.setup-step small{font-size:10px;line-height:1.4;color:#637a70;text-align:center}
+.setup-step.active{background:#f3faf5;border-color:#82c0a5}.setup-step.active span,.setup-step.done span{background:#258f69;color:white}
+.setup-main-card{border-radius:16px;border:1px solid #dcebe2;background:#f9fcfa;padding:20px;margin-bottom:18px}
+.setup-title{font-size:11px;color:#68977c;font-weight:800;margin-bottom:11px;display:flex;justify-content:space-between;align-items:center;gap:8px}
+.setup-main-card h3{font-size:19px}.setup-main-card p{font-size:12px;color:#647a6e;line-height:1.75}
+.setup-summary{font-weight:750!important;color:#365d4d!important}
+.setup-actions{display:flex;gap:9px;flex-wrap:wrap;margin:20px 0 12px}
+.setup-guide{border-top:1px solid #e3ede7;padding-top:12px;color:#657f70;font-size:12px}
+.setup-guide summary{cursor:pointer;font-weight:750;color:#3b7c63}.setup-guide p{line-height:1.65}
+.conn-pill{display:inline-flex;flex:0 0 auto;padding:6px 8px;font-size:10px;color:#896a43;border-radius:99px;background:#fff1e0}
+.conn-pill.ok{color:#1c855c;background:#e1f4e8}
+@media(max-width:740px){.portrait-grid{grid-template-columns:1fr}.setup-progress{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+
+/* V6: user-owned Persona Skills and lifecycle-driven Skills */
+.skill-shortcut{flex:0 0 auto;font-size:11px;color:#29816a;font-weight:750;padding:7px 9px;border:1px solid #cce8d9;background:#eff8f2;border-radius:8px;white-space:nowrap}
+.skill-shortcut:hover{background:#e4f4e9}
+.skill-lead{padding:16px;background:linear-gradient(130deg,#f0f9f3,#f7fbfa);border:1px solid #d9ebdf;border-radius:14px;margin:0 0 14px}
+.skill-lead h3{margin:0 0 7px;font-size:19px;color:#244e3a}.skill-lead p{font-size:12px;color:#668476;line-height:1.65;margin:0}
+.skill-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:13px 0}
+.skill-action{min-height:34px;padding:8px 12px;border:1px solid #d8e8de;border-radius:9px;background:#fff;color:#376b57;font-weight:700;font-size:12px}
+.skill-action.main{color:#fff;background:#267b5c;border-color:#267b5c}.skill-action:disabled{opacity:.45;cursor:not-allowed}
+.skill-section-head{margin:22px 0 9px;display:flex;gap:8px;align-items:baseline;justify-content:space-between}
+.skill-section-head strong{font-size:14px;color:#274f3e}.skill-section-head small{font-size:11px;color:#849c90}
+.skill-list{display:grid;gap:9px}.skill-item{display:flex;align-items:center;gap:12px;background:#fff;border:1px solid #e0eae5;border-radius:13px;padding:13px;min-width:0}.skill-item.is-off{opacity:.67}.skill-item .skill-mark{width:36px;height:36px;flex:0 0 36px;background:#e9f5ee;border-radius:10px;color:#308463;display:grid;place-items:center;font-weight:800;font-size:17px}.skill-item.workflow .skill-mark{background:#e9eff9;color:#5f77ab}.skill-item-main{flex:1;min-width:0}.skill-item-title{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.skill-item-title strong{font-size:13px}.skill-tag{font-size:10px;padding:3px 6px;border-radius:5px;background:#f0f5f1;color:#789183;white-space:nowrap}.skill-tag.ai{background:#fff3df;color:#926c35}.skill-item-main p{font-size:11px;color:#7f9188;line-height:1.5;margin:5px 0}.skill-stages{font-size:10px;color:#548470;display:flex;flex-wrap:wrap;gap:5px}.skill-stages span{background:#edf8f0;border-radius:5px;padding:3px 6px}.skill-item-acts{display:flex;align-items:center;gap:5px;flex-wrap:wrap;justify-content:flex-end}.skill-mini{border:1px solid #e2eae4;border-radius:8px;padding:6px 8px;background:#fff;color:#50725d;font-size:11px;white-space:nowrap}.skill-mini:hover{background:#edf8f1}.skill-on{color:#2c8264;background:#e6f6eb;border-color:#c7e8d3}
+.skill-editor{padding:16px;border-radius:14px;border:1px solid #cee2d3;background:#fbfefb}.skill-editor h3{margin:0 0 5px}.skill-editor .muted{font-size:11px;color:#7d9085;line-height:1.55;margin:0 0 13px}.skill-field{display:grid;gap:6px;margin:12px 0}.skill-field label{font-weight:750;color:#365c47;font-size:12px}.skill-input,.skill-textarea,.skill-select{border:1px solid #d7e5da;border-radius:9px;padding:9px 10px;font:inherit;color:#274936;background:#fff;width:100%;font-size:13px;min-width:0}.skill-textarea{line-height:1.65;resize:vertical;min-height:82px}.skill-field small{color:#84978b;font-size:11px;line-height:1.5}.skill-stagemap{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.skill-stage-option{display:flex;gap:8px;align-items:flex-start;padding:10px;border:1px solid #e1eae3;background:#fff;border-radius:9px;cursor:pointer}.skill-stage-option input{accent-color:#267b5c;margin:2px 0 0}.skill-stage-option strong{font-size:11px;display:block}.skill-stage-option small{font-size:10px;line-height:1.5;color:#8a988d;display:block;margin-top:4px}.skill-ai-box{border:1px dashed #b8d8c8;background:#f1faf5;border-radius:12px;padding:13px;margin:12px 0}.skill-ai-box strong{font-size:13px}.skill-ai-box p{font-size:11px;line-height:1.65;color:#688473}.skill-ai-box textarea{margin:8px 0}.skill-review{padding:12px;border-radius:10px;background:#fff9eb;border:1px solid #f3e5c8;color:#78643d;font-size:12px;line-height:1.65;margin:13px 0}.skill-preview{background:#f2f7f4;border:1px solid #ddebe2;border-radius:12px;padding:13px;margin:12px 0;font-size:12px;line-height:1.7;color:#3e5c4d;white-space:pre-wrap}.skill-lifecycle{display:flex;align-items:stretch;flex-wrap:wrap;gap:5px;margin:10px 0 15px}.skill-life-step{flex:1 1 92px;min-width:0;padding:8px;background:#f3f6f4;color:#657c6e;text-align:center;border-radius:8px;font-size:10px;line-height:1.55}.skill-life-step b{display:block;color:#345e48;font-size:11px}.skill-life-step.is-active{background:#e2f3e9;color:#296a4d}
+@media(max-width:690px){.skill-section-head{align-items:flex-start}.skill-item{align-items:flex-start;flex-wrap:wrap}.skill-item-main{flex-basis:calc(100% - 52px)}.skill-item-acts{width:100%;justify-content:flex-end}.skill-stagemap{grid-template-columns:1fr}.skill-editor{padding:12px}.skill-life-step{flex-basis:29%}.skill-shortcut{padding:6px 7px;font-size:11px}}
+@media(max-width:350px){.skill-shortcut{font-size:10px;padding:6px}.skill-action{font-size:11px;padding:7px 8px}.skill-life-step{flex-basis:46%}}
+
+
+
+/* V7: reviewed product layout. Personalization is per conversation, shared by both UI modes. */
+.topright{gap:8px}.prototype-entry{border:1px dashed #d7b889;background:#fffaf0;color:#95704b;font-weight:700;gap:5px}
+.prototype-label{font-size:9px;letter-spacing:.04em;color:#b58d63}
+.sidebar .side-bottom{padding:12px 15px}.side-bottom .listen-summary{justify-content:space-between;gap:8px}.side-note{font-size:11px;color:#93a19b}
+.chat-actions{gap:8px}.chat-section{min-height:0}.chat-timeline{flex:1 1 auto;min-height:0}
+.ai-panel{min-height:0}.ai-top{flex-shrink:0}.ai-linked{gap:8px}.shared-hint{font-size:10px;color:#98a6a0;white-space:nowrap}
+.ai-scroll{flex:1;display:flex;flex-direction:column;min-height:0;overflow-y:auto;padding:16px 17px;gap:16px}
+.ai-turns{display:flex;flex-direction:column;gap:10px;flex:0 0 auto;min-height:0}
+.ai-quick-result{order:2;border:1px solid #dcebe4;border-radius:15px;padding:13px;background:#f6fbf8;box-shadow:0 3px 14px rgba(31,89,63,.03)}
+.quick-answer-heading{display:flex;align-items:center;justify-content:space-between;gap:7px}.quick-answer-heading>div{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.quick-answer-kicker{font-size:12px;font-weight:800;color:#30735c}.quick-answer-note{font-size:11px;color:#72887d;line-height:1.5;margin:8px 0}
+.ai-quick-result .suggest-list{display:flex;flex-direction:column;gap:7px}.ai-quick-result .suggest-card{width:100%;display:flex;flex-direction:column;align-items:flex-start;gap:5px;border:1px solid #deebe4;border-radius:10px;background:#fff;padding:10px 12px;position:relative;text-align:left;min-height:0;transition:background .14s,border-color .14s}
+.ai-quick-result .suggest-card:hover{border-color:#8ec4a9;background:#fdfefd}
+.ai-quick-result .suggest-label{font-size:11px;color:#438269;font-weight:740;display:block}.ai-quick-result .suggest-text{font-size:13px;color:#334a40;line-height:1.6;overflow-wrap:anywhere;display:block;max-width:calc(100% - 17px)}
+.ai-quick-result .copy-mark{position:absolute;right:9px;bottom:10px;width:15px;color:#56a187}.ai-quick-result .suggest-placeholder{border:0;background:transparent;padding:10px 0;font-size:12px;line-height:1.6;color:#86978d}
+.ai-quick-result .suggest-progress{margin-top:8px;font-size:11px;color:#628a75}
+.ai-composer{flex:0 0 auto;border-top:1px solid #e2ece7;background:#fff;padding:12px 14px 13px;display:flex;flex-direction:column;gap:10px}
+
+.ai-field{display:flex;flex-direction:column;gap:4px;color:#698273;font-size:11px;font-weight:700;min-width:0}
+.ai-field select{min-width:0;width:100%;height:35px;border:1px solid #dae8e0;border-radius:9px;padding:0 7px;color:#375447;background:#fafdfe;font-size:12px}
+
+
+.quick-ask{display:inline-flex;align-items:center;justify-content:center;gap:6px;flex:0 0 auto;background:#e3f3eb;color:#237859;border:1px solid #cce8d9;border-radius:9px;min-height:36px;padding:6px 12px;font-size:12px;font-weight:750}
+.quick-ask:hover{background:#d7eee1}.quick-ask svg{width:15px;height:15px}
+.compose-input-wrap{position:relative}.compose-input-wrap textarea{width:100%;min-height:72px;resize:vertical;max-height:160px;padding:10px 42px 10px 11px;border:1px solid #dce9e1;border-radius:11px;line-height:1.55;font-size:13px;color:#344b42;background:white}
+.compose-disclaimer{margin:0;color:#9aa8a0;font-size:10px}
+.ai-welcome{margin:0 0 6px}.ai-turn .ai-speaker{color:#37805e}
+.focus-view{background:#eaf2ee;padding:10px 8px}.focus-card{max-width:520px;width:100%;padding:13px;gap:10px;border-radius:15px;display:flex;flex-direction:column}
+.focus-top{display:flex;align-items:center;justify-content:space-between;gap:8px}.focus-top .focus-expand{display:inline-flex;align-items:center;gap:4px;min-height:33px;font-size:13px;font-weight:750;color:#397a60;border-radius:8px;background:#edf6f1;padding:5px 8px}
+.focus-caption{font-size:13px;font-weight:700;color:#60796d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.focus-rule{height:1px;background:#e4ede8;margin:0}
+.focus-settings{display:grid;grid-template-columns:1fr 1fr;gap:8px}.focus-settings label{display:flex;flex-direction:column;gap:5px;min-width:0;font-size:12px;font-weight:700;color:#61776e}.focus-settings select{width:100%;min-width:0;height:38px;max-width:100%;font-size:12px;padding:4px 6px;border:1px solid #dae8e0;border-radius:9px;background:#f8fcf9;color:#345849}
+.focus-workbench{width:100%;display:flex;align-items:center;justify-content:center;gap:7px;font-size:12px;font-weight:760;min-height:35px;border:1px solid #dbeae1;background:#f0f7f2;border-radius:9px;color:#34785e}
+.focus-workbench svg{width:15px;height:15px}.focus-cards{display:flex;flex-direction:column;gap:8px}.focus-choice{min-height:67px;padding:10px 11px;display:flex;gap:9px;align-items:center;text-align:left;border:1px solid #e0ebe6;border-radius:10px;background:#fff;width:100%}
+.focus-choice .words{font-size:13px;line-height:1.55;word-break:break-word;color:#30483c}.focus-choice .tick{font-size:10px;color:#2f8969}
+.focus-regenerate{min-height:39px;width:100%;display:flex;align-items:center;justify-content:center;gap:7px;font-size:13px;font-weight:750;color:#2c795e;background:#ecf7f0;border:1px solid #cee7d8;border-radius:9px}
+.focus-regenerate svg{width:17px;height:17px}.focus-details{padding:9px 11px;background:#f4f9f6;border-radius:9px;margin:0}.focus-details p{margin:0;font-size:11px;line-height:1.6;color:#678171}
+.prototype-panel{position:fixed;z-index:50;top:76px;right:14px;width:min(310px,calc(100vw - 28px));padding:14px 15px;border:2px dashed #c49d6a;background:#fff9ed;color:#614c30;border-radius:13px;box-shadow:0 12px 40px #533f1d28}
+.prototype-head{display:flex;justify-content:space-between;align-items:center;gap:8px}.prototype-head strong{font-size:13px}.prototype-head button{font-size:22px;width:24px;height:24px}.prototype-panel p{font-size:11px;line-height:1.6;color:#8c7451}.prototype-test-btn{padding:9px 12px;display:flex;gap:6px;align-items:center;background:#f3e5c8;border-radius:8px;border:1px solid #dfc699;font-weight:750;font-size:12px}.prototype-panel .prototype-hint{margin-bottom:0}
+.drawer-tabs{display:flex;flex-direction:column;gap:6px}.drawer-tab{min-height:44px;font-size:13px}.setting-hub{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:14px}.hub-card{display:flex;gap:9px;min-width:0;flex-direction:column;text-align:left;padding:15px;background:#fbfdfb;border:1px solid #e2eee5;border-radius:13px}.hub-card strong{font-size:13px;color:#385d4b}.hub-card small{font-size:11px;color:#83988b;line-height:1.6}.hub-card:hover{background:#f0f9f3;border-color:#a7d2b9}.drawer-back{display:flex;align-items:center;gap:6px;font-size:12px;color:#337f61;font-weight:750;margin-bottom:12px}.drawer-content-root{min-width:0}
+@media(max-width:1040px){.ai-panel{width:min(445px,100%)}.ai-composer{padding:13px}}
+@media(max-width:690px){.prototype-label{display:none}.prototype-entry{font-size:11px}.topright{gap:4px}.ai-linked{flex-wrap:wrap}.ai-scroll{padding:13px}.ai-top{min-height:64px;height:64px}.ai-composer{padding:12px}.setting-hub{grid-template-columns:minmax(0,1fr)}.focus-card{max-width:520px}.prototype-panel{top:58px}}
+@media(max-width:350px){.focus-view{padding:5px}.focus-card{padding:9px;gap:8px}.focus-choice .words{font-size:12px}.focus-settings{gap:6px}.focus-settings label{font-size:11px}.focus-settings select{font-size:11px;height:36px}.prototype-entry{padding:6px}}
+
+/* V8: AI presets always stay visible; one shared settings row lives BELOW the question input. */
+.ai-prompt-presets{display:grid;grid-template-columns:minmax(0,1fr);gap:6px;min-width:0}
+.ai-prompt-presets .question-btn{display:flex;align-items:center;gap:7px;width:100%;padding:7px 10px;min-height:33px;line-height:1.4;font-size:11px;overflow-wrap:anywhere}
+.ai-prompt-presets .question-btn.is-reply-preset{background:#f2faf5;border-color:#cfe9d9;color:#30795c;font-weight:720}
+.ai-prompt-presets .question-btn.is-reply-preset svg{height:15px;width:15px;flex:0 0 auto}
+.ai-prompt-presets .question-btn:disabled{opacity:.65}
+.ai-settings-send-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) 36px;gap:8px;align-items:end;min-width:0}
+.ai-settings-send-row .ai-field{min-width:0}
+.ai-settings-send-row .sendbtn{position:static;min-height:35px;height:35px;align-self:end}
+.ai-composer .compose-input-wrap textarea{padding:11px 12px;height:74px;max-height:160px;min-height:64px;resize:vertical}
+.focus-details{display:flex;flex-direction:column;gap:9px;padding:0;margin:0;background:transparent;border:0;border-radius:0}
+.focus-details .focus-rule{margin:0}
+@media(max-width:350px){.ai-settings-send-row{gap:5px;grid-template-columns:minmax(0,1fr) minmax(0,1fr) 35px}.ai-settings-send-row .ai-field select{padding-left:4px;padding-right:4px;font-size:11px}.ai-prompt-presets .question-btn{font-size:11px;padding:7px 8px}}
+</style>
+</head>
+<body>
+<div id="app">
+<header class="topbar">
+<div class="brand"><span class="brandmark">知</span><div class="brandname">知间 <span class="brandtag">让每一次沟通都更从容</span></div></div>
+<div class="topright">
+<span aria-label="产品原型，不连接真实数据" class="demo-pill"><span class="demo-dot"></span> 交互原型 · 虚构数据</span>
+<button aria-label="原型测试专用入口" class="top-chip prototype-entry" data-action="prototype" title="只用于产品评审，正式应用不会出现">实验台 <span class="prototype-label">DEMO ONLY</span></button>
+<button class="top-chip" data-action="drawer" data-tab="contacts"><span data-icon="settings"></span><span class="label">设置</span></button>
+<button class="top-chip" data-action="focus"><span data-icon="minimize"></span><span class="label">极简模式</span></button>
+<button aria-label="联系人" class="iconbtn mobile-contacts" data-action="mobile-contacts"><span data-icon="users"></span></button>
+</div>
+</header>
+<div class="app-body">
+<aside class="sidebar" id="sidebar">
+<div class="side-top">
+<div class="subhead">当前微信账号</div>
+<div class="account-select-wrap"><span class="account-logo">微</span><div class="accopy"><strong id="accountName">微信 · 生活号</strong><small id="accountSub">已连接本机微信</small></div><span class="account-chev" data-icon="chevron-down"></span><select aria-label="切换微信账号" id="accountSelect"></select></div>
+<div class="side-search"><span data-icon="search"></span><input aria-label="搜索联系人" autocomplete="off" id="contactSearch" placeholder="搜索联系人或会话"/></div>
+</div>
+<div class="list-controls"><strong>消息</strong><div class="filter-group"><button class="active" data-action="filter" data-filter="all">全部</button><button data-action="filter" data-filter="listening">监听中</button></div></div>
+<div class="conv-list" id="conversationList"></div>
+<div class="side-bottom">
+<div class="listen-summary"><span><span class="live-light"></span><span id="listenCount">3 个会话正在监听</span></span><span class="side-note">持续后台采集</span></div>
+</div>
+</aside>
+<main class="chat-section">
+<div class="chat-header">
+<button aria-label="打开联系人列表" class="iconbtn mobile-contacts" data-action="mobile-contacts"><span data-icon="menu"></span></button>
+<div class="avatar" id="chatAvatar">满</div><div class="chat-title-group"><div class="chat-title"><strong id="chatTitle">小满</strong><span class="status-mini" id="chatStatus">监听中</span></div><div class="chat-subtitle" id="chatSubtitle">每条建议只针对当前联系人</div></div>
+<div class="chat-actions">
+<button class="iconbtn mobile-ai-open" data-action="ai-open" title="打开 AI 咨询"><span data-icon="sparkles"></span></button>
+</div>
+</div>
+<div class="identity-banner hidden" id="identityBanner"><span>该会话的本人/对方方向仍待确认，请先校准后再依据长期记忆作判断。</span><button data-action="drawer" data-tab="identity">去校准 →</button></div>
+<div class="chat-timeline" id="chatTimeline"></div>
+</main>
+<aside class="ai-panel" id="aiPanel">
+<div class="ai-top"><span class="ai-icon" data-icon="sparkles"></span><div class="ai-title"><strong>AI 自由咨询</strong><small>提问、生成回复与深入分析都在这里</small></div><button aria-label="关闭 AI 咨询" class="iconbtn mobile-ai-open" data-action="ai-close"><span data-icon="x"></span></button></div>
+<div class="ai-linked"><span>正在讨论：<strong id="aiContact">小满</strong></span><span class="shared-hint">同一会话共用人设与分析深度</span></div>
+<div class="ai-scroll" id="aiScroll">
+<div class="ai-turns" id="aiTurns"></div>
+<section aria-label="AI 快速问答的回复建议" class="ai-quick-result hidden" id="aiQuickResult">
+<div class="quick-answer-heading"><div><span class="quick-answer-kicker">快速问答 · 三条回复</span><span class="gen-status" id="suggestStatus">等待生成</span></div><button class="small-plain hidden" data-action="cancel-generate" id="cancelGen">取消任务</button></div>
+<div class="quick-answer-note" id="suggestInfo">根据当前聊天生成，点击候选即可复制。</div>
+<div class="suggest-list" id="suggestions"><div class="suggest-placeholder">点击第三个快速提问，即可得到三条可复制建议。</div></div>
+<div class="suggest-progress hidden" id="suggestProgress"><span class="spinner"></span><span id="progressText">正在准备上下文…</span></div>
+</section>
+</div>
+<div class="ai-composer">
+<div class="ai-prompt-presets" aria-label="快速提问预设">
+<button class="question-btn" data-action="ask-example" data-q="对方这次邀约，我怎样回复会自然又不显得敷衍？">如何自然地回应这次邀约？</button>
+<button class="question-btn" data-action="ask-example" data-q="结合我们的聊天，帮我想几个可以继续聊的话题。">帮我找几个继续聊天的话题</button>
+<button class="question-btn is-reply-preset" data-action="generate" id="generateButton"><span data-icon="sparkles"></span><span>生成三条回复最新消息的参考</span></button>
+</div>
+<div class="compose-input-wrap"><textarea aria-label="向 AI 自由提问" id="aiInput" placeholder="围绕当前聊天提问，例如：对方在暗示什么？"></textarea></div>
+<div class="ai-settings-send-row">
+<label class="ai-field"><span>人设</span><select aria-label="当前会话共用人设" id="personaSelect"></select></label>
+<label class="ai-field"><span>分析深度</span><select aria-label="当前会话共用分析深度" id="thinkingSelect"><option value="Quick">快速</option><option value="Balanced">平衡</option><option value="Deep">深度</option><option value="Max">Max · 复核</option></select></label>
+<button class="sendbtn" data-action="ask" id="aiSend" title="发送问题给 AI" aria-label="发送问题给 AI"><span data-icon="send"></span></button>
+</div>
+</div>
+</aside>
+</div>
+<div class="ai-overlay hidden" data-action="ai-close" id="aiOverlay"></div>
+<div class="mobile-side-scrim hidden" data-action="mobile-contacts" id="sideOverlay"></div>
+<!-- Focus mode: the toggle controls ONLY persona/depth/workspace; three suggestions and regenerate remain visible. -->
+<section class="focus-view" id="focusView"><div class="focus-card">
+<div class="focus-top"><button aria-expanded="true" class="focus-expand" data-action="focus-expand" id="focusExpand"><span data-icon="chevron-down"></span><span id="focusExpandText">折叠</span></button><span class="focus-caption" id="focusName">小满 · 只读助手</span></div>
+<div class="focus-details" id="focusDetails">
+<div class="focus-rule"></div>
+<div class="focus-settings">
+<label><span>人设</span><select aria-label="极简模式人设" id="focusPersonaSelect"></select></label>
+<label><span>分析深度</span><select aria-label="极简模式分析深度" id="focusLevelSelect"><option value="Quick">快速</option><option value="Balanced">平衡</option><option value="Deep">深度</option><option value="Max">Max</option></select></label>
+</div>
+<button class="focus-workbench" data-action="workspace"><span data-icon="maximize"></span>打开工作台</button>
+</div>
+<div class="focus-rule"></div>
+<div class="focus-cards" id="focusChoices"></div>
+<div class="focus-status hidden" id="focusStatus"></div>
+<button class="focus-regenerate" data-action="generate"><span data-icon="refresh"></span>换一批</button>
+</div></section>
+<div class="scrim hidden" data-action="close-drawer" id="scrim"></div>
+<section aria-label="应用管理与联系人详情" aria-modal="true" class="drawer hidden" id="drawer" role="dialog">
+<header class="drawer-head"><div class="headgroup"><span class="spark" data-icon="sliders"></span><div><h2>设置中心</h2><small>按照使用场景分类 · 不改变当前聊天</small></div></div><button aria-label="关闭" class="iconbtn" data-action="close-drawer"><span data-icon="x"></span></button></header>
+<div class="drawer-body"><nav aria-label="设置分组" class="drawer-tabs" id="drawerTabs">
+<button class="drawer-tab active" data-action="tab" data-tab="contacts"><span data-icon="users"></span>联系人与会话</button>
+<button class="drawer-tab" data-action="tab" data-tab="ai-settings"><span data-icon="sparkles"></span>AI 与个性化</button>
+<button class="drawer-tab" data-action="tab" data-tab="connections"><span data-icon="settings"></span>连接与设备</button>
+<button class="drawer-tab" data-action="tab" data-tab="app-status"><span data-icon="radio"></span>应用与状态</button>
+</nav><div class="drawer-main" id="drawerContent"></div></div>
+<footer class="drawer-footer">知间 · 本地优先 · 微信只读 · 所有演示数据均为虚构内容</footer>
+</section>
+<section aria-label="原型测试实验台" class="prototype-panel hidden" id="prototypePanel">
+<div class="prototype-head"><strong>仅供原型评审</strong><button aria-label="关闭原型测试" data-action="prototype-close">×</button></div>
+<p>以下控件不会进入正式应用；聊天内容与 AI 均为模拟。</p>
+<button class="prototype-test-btn" data-action="simulate"><span data-icon="zap"></span>触发一条模拟新消息</button>
+<p class="prototype-hint">用于验证：列表更新、建议过期与切换会话后状态隔离。</p>
+</section><div aria-live="polite" class="toast" id="toast" role="status"></div>
+</div>
+<script>
+(() => {
+ 'use strict';
+ const svg = (name) => {
+  const nodes = {
+   sparkles:'<path d="m12 3 1.9 5.8L20 11l-6.1 2.2L12 19l-1.9-5.8L4 11l6.1-2.2L12 3Z"/><path d="m20 17 .8 1.5L22 19l-1.2.5L20 21l-.7-1.5L18 19l1.3-.5L20 17ZM4 2l.7 1.3L6 4l-1.3.7L4 6l-.7-1.3L2 4l1.3-.7L4 2Z"/>',
+   users:'<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>',
+   settings:'<path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06-2.87 2.87-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1.2 1.6v.1H9.74V21a1.7 1.7 0 0 0-1.2-1.6 1.7 1.7 0 0 0-1.87.34l-.06.06-2.87-2.87.06-.06A1.7 1.7 0 0 0 4.14 15a1.7 1.7 0 0 0-1.6-1.2h-.1V9.74h.1a1.7 1.7 0 0 0 1.6-1.2 1.7 1.7 0 0 0-.34-1.87l-.06-.06 2.87-2.87.06.06A1.7 1.7 0 0 0 8.54 4.14a1.7 1.7 0 0 0 1.2-1.6v-.1h4.06v.1a1.7 1.7 0 0 0 1.2 1.6 1.7 1.7 0 0 0 1.87-.34l.06-.06 2.87 2.87-.06.06A1.7 1.7 0 0 0 19.4 8.54a1.7 1.7 0 0 0 1.6 1.2h.1v4.06H21a1.7 1.7 0 0 0-1.6 1.2Z" transform="translate(0 0) scale(.96)"/>',
+   book:'<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z"/>',
+   minimize:'<path d="m8 3 0 5H3M16 21v-5h5M3 8l5-5M16 16l5 5"/>',maximize:'<path d="M8 3H3v5M3 3l7 7M16 21h5v-5M21 21l-7-7"/>',
+   search:'<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>',
+   'chevron-down':'<path d="m6 9 6 6 6-6"/>',
+   'more-horizontal':'<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
+   'arrow-right':'<path d="M5 12h14m-7-7 7 7-7 7"/>',
+   smile:'<circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/>',
+   refresh:'<path d="M20 11a8 8 0 0 0-14-5L4 8V3M4 8h5M4 13a8 8 0 0 0 14 5l2-2v5m0-5h-5"/>',
+   send:'<path d="m22 2-7 20-4-9-9-4 20-7Z"/><path d="M22 2 11 13"/>',
+   x:'<path d="M18 6 6 18M6 6l12 12"/>',
+   menu:'<path d="M4 7h16M4 12h16M4 17h16"/>',
+   info:'<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>',
+   zap:'<path d="m13 2-9 12h7l-1 8 10-12h-7l0-8Z"/>',
+   radio:'<circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.48m-8.48 0a6 6 0 0 1 0-8.48M19.07 4.93a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14"/>',
+   message:'<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8A8.5 8.5 0 0 1 12.5 20a8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8A8.5 8.5 0 0 1 12.5 3H13a8.5 8.5 0 0 1 8 8v.5Z"/>',
+   home:'<path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V10Z"/><path d="M9 21v-8h6v8"/>',
+   history:'<path d="M3 12a9 9 0 1 0 3-6.7L3 8m0-5v5h5"/><path d="M12 7v5l3 2"/>',
+   sliders:'<path d="M4 7h16M4 17h16"/><circle cx="8" cy="7" r="2" fill="white"/><circle cx="16" cy="17" r="2" fill="white"/>',
+   copy:'<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>',
+   check:'<path d="m5 12 4 4L19 6"/>',
+   clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'
+  };
+  return `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${nodes[name] || nodes.info}</svg>`;
+ };
+ function hydrateIcons(root=document){root.querySelectorAll('[data-icon]').forEach(el=>el.innerHTML=svg(el.dataset.icon));}
+ const $=id=>document.getElementById(id);const escape=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+ const accounts=[{id:'personal',name:'微信 · 生活号',sub:'已连接本机微信',active:true},{id:'work',name:'微信 · 工作号',sub:'当前未在本机登录',active:false}];
+ const baseMessages={
+  man:[['them','早呀！上次你说想去的那家面包店，我今天路过看到了。','09:12'],['me','哈哈，是不是门口总排队的那家？','09:14'],['them','对对，就是那家！','09:15'],['them','周六下午你有空吗？我们可以一起去看看，顺便喝杯咖啡 ☕','09:16']],
+  lin:[['them','那个展我已经看好时间了～','昨天 20:12'],['me','什么时间呀？','昨天 20:15'],['them','周日下午两点可以，我把地址发给你。','昨天 20:18']],
+  qing:[['them','上次推荐的纪录片我看完了，确实很好看。','昨天 21:03'],['me','结尾是不是很让人意外？','昨天 21:08'],['them','有点！你还有类似的推荐吗？','昨天 21:10']],
+  june:[['them','方案我又调整了一版，明天方便看一下吗？','10:04'],['me','可以，我上午有空。','10:09'],['them','那我整理完发你。','10:11']],
+  chen:[['them','明天中午一起吃饭吗？','周一 18:12'],['me','应该没问题，等我确认一下时间。','周一 18:20']],
+  lee:[['them','你之前说的那个餐厅叫什么名字来着？','周日 17:26']],
+  dana:[['them','收到，谢谢！','上周']],
+  alice:[['them','下周项目讨论会先定在周二，可以吗？','08:38']],
+  ben:[['them','我们把会议纪要更新好了。','昨天 15:30']]
+ };
+ const raws=[
+  {id:'man',account:'personal',name:'小满',letter:'满',palette:['#d9e9df','#517e64'],preview:'周六下午你有空吗？我们可以一起去看看…',time:'09:16',unread:1,listen:true,identity:'confirmed',memory:[{kind:'共同经历',text:'你们之前讨论过一家经常排队的面包店，对方记得你想去。',evidence:'聊天记录 · 今天 09:12'},{kind:'喜好',text:'倾向于轻松自然的聊天风格。',evidence:'手动备注'},{kind:'近期计划',text:'对方提出周六下午去面包店并喝咖啡。',evidence:'聊天记录 · 今天 09:16'}]},
+  {id:'lin',account:'personal',name:'阿梨',letter:'梨',palette:['#f7e7dc','#a7755a'],preview:'周日下午两点可以，我把地址发给你。',time:'昨天',unread:0,listen:true,identity:'confirmed',memory:[{kind:'共同话题',text:'你们计划一起看一个展览。',evidence:'聊天记录 · 昨天 20:18'}]},
+  {id:'qing',account:'personal',name:'青青',letter:'青',palette:['#e5e7f6','#7779ae'],preview:'你还有类似的推荐吗？',time:'昨天',unread:2,listen:true,identity:'pending',memory:[]},
+  {id:'june',account:'personal',name:'六月',letter:'六',palette:['#faedda','#aa8048'],preview:'那我整理完发你。',time:'10:11',unread:0,listen:false,identity:'confirmed',memory:[{kind:'计划',text:'对方准备发送修改后的方案。',evidence:'聊天记录'}]},
+  {id:'chen',account:'personal',name:'陈同学',letter:'陈',palette:['#dfeeee','#5d8f89'],preview:'应该没问题，等我确认一下时间。',time:'周一',unread:0,listen:false,identity:'confirmed',memory:[]},
+  {id:'lee',account:'personal',name:'栗子',letter:'栗',palette:['#f3e3e3','#a67d84'],preview:'你之前说的那个餐厅叫什么名字来着？',time:'周日',unread:0,listen:false,identity:'pending',memory:[]},
+  {id:'dana',account:'personal',name:'大南',letter:'南',palette:['#dde7fa','#617fae'],preview:'收到，谢谢！',time:'上周',unread:0,listen:false,identity:'confirmed',memory:[]},
+  {id:'alice',account:'work',name:'项目协调',letter:'项',palette:['#d9e7fa','#6683b0'],preview:'下周项目讨论会先定在周二，可以吗？',time:'08:38',unread:0,listen:false,identity:'confirmed',memory:[]},
+  {id:'ben',account:'work',name:'设计协作',letter:'设',palette:['#f5e5d5','#9e7759'],preview:'我们把会议纪要更新好了。',time:'昨天',unread:0,listen:false,identity:'confirmed',memory:[]}
+ ];
+ const portraitExamples={
+   man:{summary:'最近围绕面包店与周末出行有过自然、轻松的交流。当前可以优先回应周六的邀约。',topics:['面包店','咖啡','周末见面'],preferences:['用户备注：倾向轻松自然的聊天方式'],plans:['周六下午 · 面包店与咖啡（待确认）'],caution:'对方的长期性格与意图尚无足够证据，不做推断'},
+   lin:{summary:'最近确认了看展的时间安排；适合继续聊地点、交通或观展后的活动。',topics:['展览','周末安排'],preferences:[],plans:['周日下午两点看展'],caution:'目前材料只支持近期计划，不应推断稳定兴趣偏好'},
+   qing:{summary:'已有纪录片话题，但本人/对方方向尚未确认。画像暂只展示可核实的聊天线索。',topics:['纪录片'],preferences:[],plans:[],caution:'请先确认发送者方向，再允许 AI 沉淀长期画像'}
+ };
+ const selfProfiles={personal:{voice:'自然、轻松、简洁，不过度热情',boundary:'不要替我做无法确认的承诺；不自动发送',notes:'优先保留我的真实措辞习惯'},work:{voice:'礼貌、清晰、重视事项确认',boundary:'不要未经我确认而答应工作安排',notes:'专业但避免生硬'}};
+ const connectionSteps=[
+ {title:'本地服务与存储',icon:'home',summary:'应用应自动检查和管理 PostgreSQL、迁移与必要运行时',detail:'由安装器/本机后台服务负责安装检测、数据目录、升级、备份与恢复。缺组件时提供受控修复，不让普通用户编辑连接字符串。',action:'模拟本地自检',guide:'开发版可展开查看 .NET、Python、PostgreSQL 依赖；正式安装包应预构建，不能每次启动 dotnet build。'},
+ {title:'微信连接与读取器',icon:'message',summary:'由用户登录微信；应用选择当前账号和授权监听的会话',detail:'只读 Reader 应自动检测微信会话和自己的运行状态。当前活动账号能监听多个已授权联系人；其他账号可保留资料但标记离线。',action:'模拟微信连接检测',guide:'若微信未登录，引导打开官方微信客户端完成登录；若 Reader 未就绪，展示原因与重新连接操作，禁止静默切换账号。'},
+ {title:'Codex / AI 连接',icon:'sparkles',summary:'应用检测 CLI/模型服务，并引导用户完成服务商认证',detail:'用户只需选择 AI 提供方、完成认证并运行不含私聊内容的连接测试；模型、Quick 路由和思考档位可在 AI 设置中调整。',action:'模拟 AI 连接测试',guide:'允许显式选择 Codex CLI 或未来的其他受支持执行器。认证凭据由本机安全存储或提供方管理，不能写入前端源码。'},
+ {title:'手机与其他设备',icon:'radio',summary:'可选：电脑批准设备配对，手机通过安全 HTTPS 访问',detail:'电脑应显示短期有效的配对码或二维码；手机建立独立可撤销会话。手机访问不到电脑时提供网络与证书诊断。',action:'模拟设备配对检查',guide:'当前仓库尚不支持手机 LAN HTTPS 配对。正式版需要受信任证书/指纹确认、来源限制与会话撤销；不能直接暴露 Reader Token。'}
+ ];
+ const connectionChecks=[false,false,false,false]; let connectionStep=0, portraitRefreshes={};
+ let personas=[['natural','自然'],['warm','温柔'],['playful','俏皮'],['direct','简洁']];
+
+  // A Persona is a specialized Skill. All content is inert configuration, never executable code.
+  const skillStages=[
+    {id:'message',title:'新消息到达',desc:'只安排轻量任务，不会自动回复'},
+    {id:'context',title:'构建上下文',desc:'决定可申请哪些已授权资料'},
+    {id:'reply',title:'生成回复前',desc:'应用表达策略或话题指导'},
+    {id:'review',title:'回复生成后',desc:'检查候选事实、语气与承诺'},
+    {id:'consult',title:'AI 咨询前',desc:'调整咨询关注点和分析方式'},
+    {id:'memory',title:'记忆沉淀前',desc:'形成待审记忆建议，不直接入库'}
+  ];
+  const skillStore=[
+    {id:'natural',name:'自然',type:'persona',description:'不刻意、不套路；尊重本人原有语言习惯',instruction:'真实、自然、简洁；避免虚构承诺。',stages:['reply','consult'],scope:'all',account:null,contact:null,enabled:true,builtin:true,origin:'built-in'},
+    {id:'warm',name:'温柔',type:'persona',description:'系统示例：关照对方感受，适当柔和表达',instruction:'照顾对方感受，语气柔和，避免机械化套话。',stages:['reply','consult'],scope:'all',account:null,contact:null,enabled:true,builtin:true,origin:'built-in'},
+    {id:'playful',name:'俏皮',type:'persona',description:'系统示例：轻松活泼，不过度调侃',instruction:'用自然的轻松语气回应，避免冒犯和自说自话。',stages:['reply','consult'],scope:'all',account:null,contact:null,enabled:true,builtin:true,origin:'built-in'},
+    {id:'direct',name:'简洁',type:'persona',description:'系统示例：直接清楚地表达，不绕圈',instruction:'文字简短但有礼，优先解决沟通需求。',stages:['reply','consult'],scope:'all',account:null,contact:null,enabled:true,builtin:true,origin:'built-in'},
+    {id:'evidence',name:'聊天事实核查',type:'workflow',description:'生成后核对约定和事实，不把猜测说成事实',instruction:'仅在拥有对应会话的授权证据时确认事实；信息不足应表明不确定。',stages:['review'],scope:'all',account:null,contact:null,enabled:true,builtin:true,origin:'built-in'},
+    {id:'topic',name:'话题延展',type:'workflow',description:'在咨询前，寻找当前话题的自然延续点',instruction:'优先延续已出现的话题，不编造共同经历。',stages:['consult'],scope:'all',account:null,contact:null,enabled:true,builtin:true,origin:'built-in'},
+    {id:'boundaries',name:'边界复核',type:'workflow',description:'核对是否替用户答应约定、作出过度承诺',instruction:'检查回复是否越权承诺、猜测亲密关系或误认发言人。',stages:['review'],scope:'all',account:null,contact:null,enabled:true,builtin:true,origin:'built-in'}
+  ];
+  let skillEditor=null,skillDraftPreview='',skillSeq=1,skillMessage='';
+  const skillAvailable=(s,x=c())=>s.enabled && (s.scope==='all'||(s.scope==='account'&&s.account===x.account)||(s.scope==='contact'&&s.contact===x.id&&s.account===x.account));
+  const personaSkill=(id)=>skillStore.find(s=>s.id===id&&s.type==='persona');
+  const enabledWorkflows=(x,stage)=>skillStore.filter(s=>s.type==='workflow'&&s.stages.includes(stage)&&skillAvailable(s,x));
+  const stageNames=(ids)=>ids.map(id=>skillStages.find(st=>st.id===id)?.title||id);
+  function syncPersonas(){
+    personas=skillStore.filter(s=>s.type==='persona'&&skillAvailable(s)).map(s=>[s.id,s.name]);
+    if(!personas.length)personas=[['natural','自然']];
+    const select=$('personaSelect');select.innerHTML=personas.map(p=>`<option value="${escape(p[0])}">${escape(p[1])}</option>`).join('');
+    if(!personas.some(p=>p[0]===c().persona)) c().persona=personas[0][0];
+    select.value=c().persona;
+  }
+  function markSkillRevision(skill){
+    for(const conv of convs){
+      if(skill.scope==='all'||(skill.scope==='account'&&conv.account===skill.account)||(skill.scope==='contact'&&conv.id===skill.contact&&conv.account===skill.account))conv.skillRevision=(conv.skillRevision||0)+1;
+      if(conv.persona===skill.id && (!skill.enabled||!skillAvailable(skill,conv)))conv.persona='natural';
+    }
+    syncPersonas();renderSuggestion();
+  }
+  function skillScopeText(skill){return skill.scope==='all'?'所有账号':skill.scope==='contact'?`仅 ${convs.find(v=>v.id===skill.contact)?.name||'指定联系人'}`:`当前微信账号`}
+  function skillEditorOpen(kind='persona',mode='manual',existing=null){
+    const target=existing||null;
+    skillEditor={
+      id:target&&!target.builtin?target.id:null,
+      type:target?.type||kind,
+      name:target?.name||(kind==='persona'?'我理解的温柔':'我的回复检查'),
+      description:target?.description||'',
+      instruction:target?.instruction||'',
+      stages:target?[...target.stages]:(kind==='persona'?['reply','consult']:['review']),
+      scope:target&&!target.builtin?target.scope:'account',
+      account:target&&!target.builtin?target.account:selectedAccount,
+      contact:target&&!target.builtin?target.contact:c().id,
+      origin:mode==='ai'?'ai-assisted':'manual',
+      aiMode:mode==='ai'
+    };
+    skillDraftPreview='';openDrawer('agent');
+  }
+  function drawSkillEditor(){
+    const draft=skillEditor,stages=skillStages.map(s=>`<label class="skill-stage-option"><input type="checkbox" data-skill-stage="${s.id}" ${draft.stages.includes(s.id)?'checked':''}><span><strong>${s.title}</strong><small>${s.desc}</small></span></label>`).join('');
+    return `<div class="skill-editor"><div class="skill-actions" style="margin-top:0"><button class="skill-action" data-action="skill-back">← 返回管理</button><span class="skill-tag ${draft.origin==='ai-assisted'?'ai':''}">${draft.origin==='ai-assisted'?'AI 辅助草稿':'个人编辑草稿'}</span></div>
+      <h3>${draft.id?'编辑':'创建'}${draft.type==='persona'?'人设 Skill':'流程 Skill'}</h3><p class="muted">只保存描述、规则和固定阶段；不会执行脚本、访问任意文件或自动发送微信。</p>
+      ${draft.aiMode?`<div class="skill-ai-box"><strong>描述你想要的效果，让 AI 帮你起草</strong><p>例如：“温柔但不讨好；先接住对方情绪，不撒娇、不用过多语气词。遇到邀约不要擅自答应。” 这里使用本地规则模拟 AI 创作结果。</p><textarea class="skill-textarea" id="skillIdea" rows="3" placeholder="用自己的话描述人设或希望自动执行的检查…"></textarea><button class="skill-action main" data-action="skill-ai-compose">模拟 AI 起草</button></div>`:''}
+      <div class="skill-field"><label for="skillKind">Skill 类型</label><select id="skillKind" class="skill-select"><option value="persona" ${draft.type==='persona'?'selected':''}>人设 · 表达风格</option><option value="workflow" ${draft.type==='workflow'?'selected':''}>流程 · 专项能力</option></select></div>
+      <div class="skill-field"><label for="skillName">名称</label><input id="skillName" class="skill-input" maxlength="34" value="${escape(draft.name)}" placeholder="例如：克制的温柔"></div>
+      <div class="skill-field"><label for="skillDesc">一句话说明</label><input id="skillDesc" class="skill-input" maxlength="100" value="${escape(draft.description)}" placeholder="这个 Skill 解决什么沟通问题？"></div>
+      <div class="skill-field"><label for="skillInstruction">行为规则（自然语言，可自定义）</label><textarea id="skillInstruction" class="skill-textarea" rows="5" maxlength="2000" placeholder="写出你想要的具体表达方式、应该避免的词句、检查范围…">${escape(draft.instruction)}</textarea><small>人设不是一个形容词：建议明确“应该做什么”“不要做什么”“如何判断是否符合”。</small></div>
+      <div class="skill-field"><label for="skillScope">适用范围</label><select id="skillScope" class="skill-select"><option value="account" ${draft.scope==='account'?'selected':''}>当前微信账号的所有联系人</option><option value="contact" ${draft.scope==='contact'?'selected':''}>仅当前联系人 · ${escape(c().name)}</option><option value="all" ${draft.scope==='all'?'selected':''}>所有已授权微信账号</option></select><small>正式版应在服务器侧保存并强制校验作用域，防止跨联系人混用。</small></div>
+      <div class="skill-field"><label>在哪些固定阶段调用？</label><div class="skill-stagemap">${stages}</div><small>只会在列出的阶段触发；与 Quick/Max 预算和访问权限分开管理。可组合多个流程 Skill。</small></div>
+      <div class="skill-review"><strong>保存前需要你确认</strong>：由 AI 创建的只是可编辑草稿；不会自动启用。文本不能授予读取其他联系人、Shell、网络访问或微信发送权限。若多个 Skill 规则冲突，以系统安全边界和你的当前人设选择为准。</div>
+      <div class="skill-actions"><button class="skill-action" data-action="skill-preview">查看执行预览</button><button class="skill-action main" data-action="skill-save">确认保存并启用</button><button class="skill-action" data-action="skill-back">取消</button></div>
+      ${skillDraftPreview?`<div class="skill-preview">${escape(skillDraftPreview)}</div>`:''}</div>`;
+  }
+  function renderSkillCenter(){
+    const x=c(),heading=`<div class="skill-lead"><h3>你来定义人设，Skill 决定何时生效</h3><p>“温柔”不必是系统理解的温柔。可以复制预设再写出自己的表达规则，也可以描述需求由 AI 辅助起草。人设本身就是一种特殊的 Skill；其他 Skill 可以在消息、上下文、生成、复核、咨询和记忆阶段运行。</p></div>`;
+    if(skillEditor)return heading+drawSkillEditor();
+    const timeline=`<div class="skill-lifecycle">${skillStages.map(st=>`<div class="skill-life-step ${enabledWorkflows(x,st.id).length?'is-active':''}"><b>${st.title}</b>${enabledWorkflows(x,st.id).length} 个流程 Skill</div>`).join('')}</div>`;
+    const rows=(type)=>skillStore.filter(s=>s.type===type).map(s=>{
+      const match=s.scope==='all'||(s.scope==='account'&&s.account===x.account)||(s.scope==='contact'&&s.contact===x.id&&s.account===x.account);
+      return `<article class="skill-item ${s.enabled&&match?'':'is-off'} ${type==='workflow'?'workflow':''}"><span class="skill-mark">${type==='persona'?'语':'⚙'}</span><div class="skill-item-main"><div class="skill-item-title"><strong>${escape(s.name)}</strong><span class="skill-tag">${s.builtin?'系统模板':'自定义'}</span><span class="skill-tag">${escape(skillScopeText(s))}</span>${s.origin==='ai-assisted'?'<span class="skill-tag ai">AI 辅助</span>':''}</div><p>${escape(s.description||s.instruction||'尚未写描述')}</p><div class="skill-stages">${stageNames(s.stages).map(v=>`<span>${escape(v)}</span>`).join('')}</div></div><div class="skill-item-acts">${type==='persona'&&match&&s.enabled?`<button class="skill-mini ${x.persona===s.id?'skill-on':''}" data-action="skill-use" data-id="${s.id}">${x.persona===s.id?'当前使用':'设为人设'}</button>`:''}<button class="skill-mini" data-action="skill-${s.builtin?'clone':'edit'}" data-id="${s.id}">${s.builtin?'复制定制':'编辑'}</button>${!s.builtin?`<button class="skill-mini" data-action="skill-toggle-v6" data-id="${s.id}">${s.enabled?'停用':'启用'}</button><button class="skill-mini" data-action="skill-delete" data-id="${s.id}">删除</button>`:''}</div></article>`;
+    }).join('');
+    return heading+`<div class="skill-actions"><button class="skill-action main" data-action="skill-new" data-kind="persona">＋ 自己创建人设</button><button class="skill-action" data-action="skill-ai-new" data-kind="persona">✦ AI 帮我创建</button><button class="skill-action" data-action="skill-new" data-kind="workflow">＋ 创建流程 Skill</button><button class="skill-action" data-action="skill-ai-new" data-kind="workflow">✦ AI 创建流程</button></div>
+      <div class="notice">当前示例：账号「${escape(activeAccount().name)}」· 联系人「${escape(x.name)}」。回复时只使用你选中的<strong>一个人设</strong>，并叠加当前范围内已启用的流程 Skill；具体执行仍受服务端权限、时间和检索预算约束。</div>
+      <div class="skill-section-head"><strong>① 人设 Skills</strong><small>可选择 / 复制修改 / 联系人专用</small></div><div class="skill-list">${rows('persona')}</div>
+      <div class="skill-section-head"><strong>② 生命周期中的流程 Skills</strong><small>按阶段运行，可启用多个</small></div>${timeline}<div class="skill-list">${rows('workflow')}</div>
+      <div class="skill-section-head"><strong>③ 模型与强度</strong><small>独立于人设 / Skill</small></div><div class="setting-card"><div class="setting-main"><strong>快速回复模型</strong><p>Quick 默认需要低延迟路径；Deep / Max 可检索、复核，但不会突破数据授权范围。</p></div><select class="pill-select" id="quickRouteSelect"><option value="fast" ${preferences.quickRoute==='fast'?'selected':''}>轻量模型优先</option><option value="codex" ${preferences.quickRoute==='codex'?'selected':''}>Codex CLI</option></select></div><div class="notice warn">原型所有创建、保存、AI 起草、触发次数都是模拟交互；正式版应提供版本、权限审查、预览与撤销，不得接受任意脚本执行。</div>`;
+  }
+  function readSkillDraft(){
+    if(!skillEditor)return null;
+    const text=v=>$(v)?.value?.trim()||'';
+    return {...skillEditor,type:text('skillKind'),name:text('skillName'),description:text('skillDesc'),instruction:text('skillInstruction'),scope:text('skillScope'),stages:[...document.querySelectorAll('[data-skill-stage]:checked')].map(n=>n.dataset.skillStage),account:selectedAccount,contact:c().id};
+  }
+  function skillAiCompose(){
+    if(!skillEditor)return;
+    const idea=$('skillIdea')?.value?.trim()||'';
+    if(idea.length<6){notify('请先写清楚你希望的表达方式或检查任务（至少 6 字）');return;}
+    const kind=skillEditor.type;
+    const gentle=/温柔|柔和|耐心|体贴|情绪|共情/.test(idea);
+    skillEditor={...skillEditor,type:kind,name:kind==='persona'?(gentle?'我理解的温柔':'我的专属表达'):'我的专属检查',description:idea.slice(0,78),instruction:kind==='persona'?`用户希望的表达风格：${idea}\n具体执行：优先理解对方原话；不制造额外亲密暗示；没有确定的约定不替用户答应。`:`自定义检查目标：${idea}\n只用当前授权上下文进行分析。若缺少证据，标记不确定，不自动提交任何修改。`,stages:kind==='persona'?['reply','consult']:['review'],origin:'ai-assisted'};
+    skillDraftPreview='AI 已生成一份结构化草稿（模拟），请修改名称、规则、范围和阶段。确认保存前不会执行。';renderDrawer();
+  }
+  function skillAction(el){
+    const action=el.dataset.action;
+    if(action==='skill-new'||action==='skill-ai-new'){skillEditorOpen(el.dataset.kind||'persona',action==='skill-ai-new'?'ai':'manual');return true;}
+    if(action==='skill-back'){skillEditor=null;skillDraftPreview='';renderDrawer();return true;}
+    if(action==='skill-ai-compose'){skillAiCompose();return true;}
+    if(action==='skill-edit'||action==='skill-clone'){
+      const source=skillStore.find(s=>s.id===el.dataset.id);if(!source)return true;
+      skillEditorOpen(source.type,'manual',source);
+      if(action==='skill-clone'){skillEditor.id=null;skillEditor.name=source.name==='温柔'?'我理解的温柔':`我的${source.name}`;skillEditor.scope='account';skillEditor.account=selectedAccount;skillEditor.contact=c().id;renderDrawer();}
+      return true;
+    }
+    if(action==='skill-preview'){
+      const d=readSkillDraft();if(!d)return true;skillEditor={...d};
+      const sample=d.type==='persona'?'示例原句：\n「周六可以呀，时间定好了告诉我～」':'示例候选：\n「周六下午我一定陪你去！」';
+      skillDraftPreview=`【模拟执行预览，不是 AI 真实生成】\n类型：${d.type==='persona'?'人设':'流程'} · ${d.name||'未命名'}\n作用域：${d.scope==='contact'?'仅当前联系人':d.scope==='all'?'所有账号':'当前账号'}\n执行阶段：${stageNames(d.stages).join(' → ')||'未选择'}\n行为说明：${d.instruction||'未填写'}\n\n${sample}\n\n真实版在生成前会校验权限与预算，生成后给出差异和复核理由。`;renderDrawer();return true;
+    }
+    if(action==='skill-save'){
+      const d=readSkillDraft();if(!d)return true;
+      if(!d.name||d.name.length>34||d.instruction.length<8||!d.stages.length||d.type==='persona'&&!d.stages.includes('reply')){notify('请填写名称、至少 8 字规则和生命周期阶段；作为回复人设须包含「生成回复前」');return true;}
+      const old=d.id?skillStore.find(s=>s.id===d.id):null;
+      const id=old?.id||`user-${skillSeq++}`;
+      const stored={id,name:d.name,type:d.type,description:d.description,instruction:d.instruction,stages:d.stages,scope:d.scope,account:d.scope==='all'?null:selectedAccount,contact:d.scope==='contact'?c().id:null,enabled:true,builtin:false,origin:d.origin};
+      if(old){Object.assign(old,stored);} else skillStore.push(stored);
+      skillEditor=null;skillDraftPreview='';markSkillRevision(stored);
+      if(stored.type==='persona'&&skillAvailable(stored)){c().persona=stored.id;syncPersonas();renderSuggestion()}
+      renderDrawer();notify(`已保存并启用「${stored.name}」（仅模拟）`);return true;
+    }
+    if(action==='skill-toggle-v6'||action==='skill-delete'||action==='skill-use'){
+      const sk=skillStore.find(s=>s.id===el.dataset.id);if(!sk)return true;
+      if(action==='skill-use'){if(!skillAvailable(sk)){notify('该人设不适用于当前联系人');return true}c().persona=sk.id;syncPersonas();renderSuggestion();notify(`当前联系人已使用「${sk.name}」`);}
+      if(action==='skill-toggle-v6'){if(!sk.builtin){sk.enabled=!sk.enabled;markSkillRevision(sk);notify(`${sk.name} 已${sk.enabled?'启用':'停用'}（模拟）`)}}
+      if(action==='skill-delete'){
+        if(sk.builtin)return true;
+        if(!window.confirm(`删除自定义 Skill「${sk.name}」？这不会删除消息或记忆。`))return true;
+        const idx=skillStore.findIndex(s=>s.id===sk.id);skillStore.splice(idx,1);markSkillRevision(sk);notify('已删除这个自定义 Skill（模拟）');
+      }
+      renderDrawer();return true;
+    }
+    return false;
+  }
+  function applyCustomPersonaSample(txt,persona,index){
+    const sk=personaSkill(persona);
+    if(!sk||sk.builtin)return txt;
+    const rules=sk.instruction;
+    if(/简短|简洁|短句|少说/.test(rules))txt=txt.replace(/[！!～~]/g,'。').replace(/哈哈，|正好|听起来/g,'').slice(0,46);
+    if(/不撒娇|克制|少用语气词|不过度热情/.test(rules))txt=txt.replace(/哈哈，|呀|呢|诶|～|好耶|噢/g,'').replace(/！/g,'。');
+    if(/不承诺|不答应|不擅自|未经确认/.test(rules)&&/周六|周日|明天/.test(txt))txt=['听起来不错，我先确认一下时间，再跟你定具体安排。','这个提议我挺喜欢，不过还得看看时间，确定后告诉你。','听上去挺好！你先说说大概怎么安排，我再确认一下时间。'][index%3];
+    if(/提问|询问|追问/.test(rules)&&!/[?？]$/.test(txt))txt+=' 你觉得怎么样？';
+    return txt.trim();
+  }
+
+ const levels={Quick:{label:'快速',detail:'最近约 15 条 · 不读历史记忆 · 优先速度',delay:1700},Balanced:{label:'平衡',detail:'近期约 40 条 · 结合人物记忆',delay:2350},Deep:{label:'深度',detail:'近期约 80 条 · 扩展历史检索',delay:3200},Max:{label:'Max',detail:'广泛检索 · 生成后独立复核',delay:4100}};
+ const convs=raws.map(r=>({...r,messages:(baseMessages[r.id]||[]).map((x,i)=>({id:`${r.id}-${i}`,who:x[0],text:x[1],time:x[2]})),revision:1,suggestion:null,version:0,busy:false,phase:'',aiHistory:[],aiBusy:false,historyBackfilled:false,persona:'natural',level:'Quick',consultLevel:'Balanced'}));
+ let selectedAccount='personal',selectedConv='man',filter='all',view='workspace',drawerTab='overview',focusOptionsExpanded=true,toastTimeout=null,taskToken=0,olderLoaded=new Set(),simNewCount=0,backfillTimer=null,backfill={status:'idle',percentage:0,full:false,resumedFrom:0};
+ const c=()=>convs.find(v=>v.id===selectedConv)||convs[0];
+ const avaStyle=x=>`--av:${x.palette[0]};--avink:${x.palette[1]}`;
+ function notify(message){const toast=$('toast');toast.textContent=message;toast.classList.add('show');clearTimeout(toastTimeout);toastTimeout=setTimeout(()=>toast.classList.remove('show'),2500)}
+ function activeAccount(){return accounts.find(a=>a.id===selectedAccount)}
+ function renderAccounts(){const acc=activeAccount();$('accountName').textContent=acc.name;$('accountSub').textContent=acc.sub;$('accountSelect').innerHTML=accounts.map(a=>`<option value="${a.id}" ${a.id===selectedAccount?'selected':''}>${escape(a.name)}${a.active?' · 已连接':' · 离线'}</option>`).join('')}
+ function renderConvs(){const term=$('contactSearch').value.trim().toLowerCase();const list=convs.filter(x=>x.account===selectedAccount&&(!term||x.name.toLowerCase().includes(term)||x.preview.toLowerCase().includes(term))&&(filter==='all'||x.listen));$('conversationList').innerHTML=list.length?list.map(x=>`<button class="conv-row ${x.id===selectedConv?'selected':''}" data-action="switch" data-id="${x.id}" aria-current="${x.id===selectedConv?'true':'false'}"><span class="avatar" style="${avaStyle(x)}">${escape(x.letter)}<span class="${x.listen?'live-mini':'live-mini offline-mini'}"></span></span><span class="conv-content"><span class="conv-first"><strong>${escape(x.name)}</strong><span class="conv-time">${escape(x.time)}</span></span><span class="conv-second"><span class="conv-preview">${escape(x.preview)}</span>${x.unread?`<span class="unread">${x.unread}</span>`:''}</span></span></button>`).join(''):`<div class="suggest-placeholder" style="margin:20px 8px">没有符合条件的会话。可切换账号或清除搜索条件。</div>`;const n=convs.filter(v=>v.account===selectedAccount&&v.listen).length;$('listenCount').textContent=`${n} 个会话正在监听`}
+ function renderChatHeader(){const x=c();$('chatTitle').textContent=x.name;$('chatAvatar').textContent=x.letter;$('chatAvatar').style.cssText=avaStyle(x);$('chatStatus').textContent=x.listen?'监听中':'未监听';$('chatStatus').classList.toggle('off',!x.listen);$('chatSubtitle').textContent=`${x.messages.length} 条演示消息 · ${x.identity==='pending'?'发送方向待确认':'身份已校准'} · 只读微信`;$('identityBanner').classList.toggle('hidden',x.identity!=='pending');$('aiContact').textContent=x.name;}
+ function renderMessages(scrollBottom=true){const x=c(),box=$('chatTimeline'),previous=box.scrollTop;let html=`<div class="history-load"><button data-action="older">${olderLoaded.has(x.id)?'已加载更早记录 · 演示':'↑ 加载更早消息'}</button></div><div class="date-line">${olderLoaded.has(x.id)?'昨天 · 今天':'今天'}</div>`;
+ if(olderLoaded.has(x.id)){html+=`<div class="bubble-row"><span class="avatar" style="${avaStyle(x)}">${escape(x.letter)}</span><div class="bubble-wrap"><div class="bubble">听说那边最近还开了一家不错的咖啡店～</div><span class="bubble-time">昨天 19:36</span></div></div>`}
+ x.messages.forEach(m=>{const mine=(m.who==='me')!==Boolean(x.swapped);html+=`<div class="bubble-row ${mine?'mine':''}">${!mine?`<span class="avatar" style="${avaStyle(x)}">${escape(x.letter)}</span>`:''}<div class="bubble-wrap"><div class="bubble">${escape(m.text)}</div><span class="bubble-time">${escape(m.time)}</span></div>${mine?'<span class="avatar" style="--av:#d9f0e5;--avink:#21866a">我</span>':''}</div>`});box.innerHTML=html;if(scrollBottom)box.scrollTop=box.scrollHeight;else box.scrollTop=previous;}
+ function buildSuggestions(x){const personality=x.generationSettings?.persona||x.persona||'natural',level=x.generationSettings?.level||x.level||'Quick';const introductions={man:[
+  ['自然回应','周六下午应该可以呀！那就一起去看看，正好我也想喝杯咖啡。','稍微主动','好呀，周六下午一起去！你比较想几点出发？','轻松俏皮','哈哈，这么巧！看来这家面包店终于等到我们了，周六见～'],
+  ['自然回应','听起来不错诶！周六下午我目前有空，我们约个时间？','轻松一点','可以呀，正好想找个借口吃点好吃的～','继续话题','好呀！你想先去面包店还是先喝咖啡？']
+ ],lin:[['确认安排','周日下午两点没问题！你把位置发我就好～','积极一点','好耶，终于可以一起看展了！那我们两点见。','顺势聊天','听起来可以呀，你比较期待展里的哪个部分？']],qing:[['自然回应','有呀！你更喜欢这部的叙事节奏还是它的主题？','主动推荐','我想到一部风格有点像的，等下把片名发给你。','接住话题','没想到你也喜欢！我们可以交换一下片单～']],june:[['自然回应','好，你整理好发我就行，我明天上午看看。','简洁一点','收到，明天上午我会安排时间看。','主动一点','没问题，你有特别想让我重点关注的地方吗？']],chen:[['自然回应','可以呀！我确认完时间再跟你说。','直接确认','好，明天中午可以，你想吃什么？','轻松回应','可以，正好也想找你一起吃顿饭～']],lee:[['自然回应','我找一下记录，应该是上次我们聊的那家。','继续话题','是你上次问我适不适合约朋友去的那家吗？','简洁一点','我确认一下名字再发你～']]};
+ const sets=introductions[x.id]||[['自然回应','可以呀，我们具体再聊聊时间和安排～','简洁一点','好，没问题。','继续话题','这个想法不错，你更倾向于哪一种？']];const source=sets[(x.version-1)%sets.length];let out=[];for(let i=0;i<3;i++){let txt=source[i*2+1];if(personality==='warm')txt=txt.replace(/呀|诶/g,'呢').replace('好，','好呀，');if(personality==='playful'&&!/[～！]$/.test(txt))txt+='～';if(personality==='direct')txt=txt.replace(/哈哈，|正好|听起来/g,'').replace('～','。');txt=applyCustomPersonaSample(txt,personality,i);out.push({label:source[i*2],text:txt})}return{items:out,version:x.generationSettings?.revision??x.revision,persona:personality,level,created:'刚刚',skillRevision:x.skillRevision||0,id:`batch-${x.id}-${x.version}`};}
+ function renderSuggestion(){const x=c(),s=x.suggestion,level=$('thinkingSelect').value,persona=$('personaSelect').value;const valid=s&&s.persona===persona&&s.level===level;const stale=s&&(s.version!==x.revision||s.skillRevision!==(x.skillRevision||0)||s.persona!==persona||s.level!==level);const info=levels[level];$('generateButton').setAttribute('aria-busy',String(Boolean(x.busy)));$('generateButton').title=x.busy?'正在生成回复参考':valid?'重新生成三条参考回复':'生成三条参考回复';$('generateButton').disabled=x.busy;$('cancelGen').classList.toggle('hidden',!x.busy);$('suggestProgress').classList.toggle('hidden',!x.busy);$('progressText').textContent=x.phase||'正在生成…';$('suggestStatus').textContent=x.busy?'正在回答':stale?'上下文或设置已变化 · 需要更新':valid?'可复制':'尚未提问';$('suggestStatus').classList.toggle('stale',Boolean(stale));$('suggestInfo').innerHTML=`${escape(info.detail)} · ${escape(personaSkill(persona)?.name||'默认')}人设 · ${enabledWorkflows(x,'review').length} 项复核 Skill${stale?' · <em>这批建议基于较早的聊天，建议重新生成</em>':' · 点击任一建议即可复制'}`;
+ $('aiQuickResult').classList.toggle('hidden',!s&&!x.busy);$('suggestions').innerHTML=s?` ${s.items.map((t,i)=>`<button class="suggest-card" data-action="copy" data-idx="${i}"><span class="suggest-label">${escape(t.label)} · 点击复制</span><span class="suggest-text">${escape(t.text)}</span><span class="copy-mark">${svg('copy')}</span></button>`).join('')}`:`<div class="suggest-placeholder">${x.busy?'正在基于当前会话组织三条回复…':'点击第三个快速提问后，这里将显示三条回复参考。'}</div>`;renderFocus();}
+ function renderFocus(){const x=c();$('focusName').textContent=`${x.name} · 只读助手`;$('focusPersonaSelect').innerHTML=personas.map(p=>`<option value="${escape(p[0])}">${escape(p[1])}</option>`).join('');$('focusPersonaSelect').value=x.persona;$('focusLevelSelect').value=x.level;const s=x.suggestion;$('focusChoices').innerHTML=s?s.items.map((q,i)=>`<button class="focus-choice" data-action="copy" data-idx="${i}"><span class="num">${i+1}</span><span class="words">${escape(q.text)}</span><span class="tick">复制</span></button>`).join(''):`<div class="focus-empty">暂无回复建议。点击下方“换一批”即可生成三条候选。</div>`;const msg=x.busy?x.phase:(s&&(s.version!==x.revision||s.skillRevision!==(x.skillRevision||0)||s.persona!==x.persona||s.level!==x.level)?'新消息或会话设置已变化，建议可能过期':'');$('focusStatus').textContent=msg;$('focusStatus').classList.toggle('hidden',!msg);}
+ function renderConsult(scrollToBottom=true){const x=c(),box=$('aiTurns');let html='';if(!x.aiHistory.length){html=`<div class="ai-welcome"><strong>嗨，来聊聊你和 ${escape(x.name)} 的对话。</strong><p>想主动找话题、分析邀约，或者拿不准怎么回应，都可以在这里继续讨论。</p></div>`}else html=x.aiHistory.map(m=>m.who==='me'?`<div class="ai-turn user"><div>${escape(m.text)}</div></div>`:`<div class="ai-turn assistant"><div><span class="ai-speaker">${svg('sparkles')} 知间 AI · ${escape(m.level||'平衡')}</span>${escape(m.text)}${m.evidence?'<span class="ai-citation">已参考当前会话上下文 · 演示</span>':''}</div></div>`).join('');if(x.aiBusy)html+=`<div class="ai-turn assistant"><div><span class="ai-speaker"><span class="spinner"></span> 正在分析当前会话…</span><span style="color:#9bacaa">你可以继续查看聊天记录，回答会留在本会话。</span></div></div>`;box.innerHTML=html;if(scrollToBottom){const scroller=$('aiScroll');scroller.scrollTop=scroller.scrollHeight;}$('aiSend').disabled=x.aiBusy;}
+ function fullRender(){renderAccounts();renderConvs();renderChatHeader();syncPersonas();$('personaSelect').value=c().persona;$('thinkingSelect').value=c().level;$('focusLevelSelect').value=c().level;renderMessages();renderSuggestion();renderConsult();if(!$('drawer').classList.contains('hidden'))renderDrawer()}
+ function switchConv(id){const next=convs.find(x=>x.id===id);if(!next)return;selectedAccount=next.account;selectedConv=id;next.unread=0;closeMobile();fullRender();notify(`已切换到 ${next.name} · 其他会话继续监听`)}
+ function generate(){const x=c();if(x.busy)return;if(!activeAccount().active){notify('该账号当前未连接，无法生成真实建议。演示模式可继续预览其他联系人。');return;}x.busy=true;x.version++;const cid=x.id;const level=$('thinkingSelect').value;x.generationSettings={persona:$('personaSelect').value,level,revision:x.revision};const workflowsBefore=enabledWorkflows(x,'reply');const workflowsAfter=enabledWorkflows(x,'review');const stages=level==='Max'?['读取近期上下文…','检索相关历史与人物记忆…','生成三条候选…','独立检查事实与语气…']:level==='Deep'?['读取近期消息…','关联历史记录…','构思三种回复方式…']:['读取当前聊天…','生成三种回复方式…'];if(workflowsBefore.length)stages.splice(1,0,`应用 ${workflowsBefore.length} 项回复前 Skill…`);if(workflowsAfter.length)stages.push(`执行 ${workflowsAfter.length} 项回复复核 Skill…`);x.phase=stages[0];renderSuggestion();if(!document.body.classList.contains('focus-mode'))$('aiQuickResult').scrollIntoView({block:'nearest',behavior:'smooth'});stages.forEach((p,i)=>setTimeout(()=>{const live=convs.find(v=>v.id===cid);if(live&&live.busy&&live.version===x.version){live.phase=p;if(c().id===cid)renderSuggestion()}},i*550));setTimeout(()=>{const live=convs.find(v=>v.id===cid);if(!live||!live.busy||live.version!==x.version)return;live.suggestion=buildSuggestions(live);live.busy=false;live.phase='';if(c().id===cid){renderSuggestion();if(!document.body.classList.contains('focus-mode'))$('aiQuickResult').scrollIntoView({block:'nearest',behavior:'smooth'});notify('三条回复建议已准备好 · 点击即可复制')}else notify(`${live.name} 的建议已生成，切回会话即可查看`)},levels[level].delay)}
+ function cancelGenerate(){const x=c();if(!x.busy)return;x.busy=false;x.version++;x.phase='';renderSuggestion();notify('已取消本次建议生成（演示）')}
+ function simulateMessage(){const x=c(),samples=['对啦，你觉得周末我们几点见比较合适？','我刚想到一件有趣的事，下次见面再跟你说～','如果你这会儿忙，晚点回复也没关系。','刚确认了一下时间，我这边可以的！'];const t=samples[simNewCount++%samples.length];x.messages.push({id:`new-${simNewCount}`,who:'them',text:t,time:'刚刚'});x.preview=t;x.time='现在';x.revision++;renderConvs();renderMessages();renderSuggestion();notify('模拟新消息已到达 · 旧建议已标记需要更新')}
+ async function copy(index){const x=c(),text=x.suggestion?.items?.[index]?.text;if(!text)return;let success=false;try{if(navigator.clipboard?.writeText){await navigator.clipboard.writeText(text);success=true}}catch{}if(!success){const ta=document.createElement('textarea');ta.value=text;ta.style.cssText='position:fixed;opacity:0;left:-3000px';document.body.appendChild(ta);ta.focus();ta.select();try{success=document.execCommand('copy')}catch{}ta.remove()}if(success)notify('已复制到剪贴板 · 请前往微信手动粘贴');else{try{window.prompt('浏览器未开放剪贴板权限，请手动复制：',text)}catch{}notify('当前浏览器限制复制，请手动选择文字')}}
+ function ask(question){const q=(question??$('aiInput').value).trim(),x=c();if(!q||x.aiBusy)return;if(q.length>900){notify('本次演示问题最多输入 900 字');return}const level=$('thinkingSelect').value;x.level=level;x.consultLevel=level;x.aiHistory.push({who:'me',text:q});x.aiBusy=true;$('aiInput').value='';renderConsult();const id=x.id;setTimeout(()=>{const v=convs.find(y=>y.id===id);if(!v)return;const ans=level==='Quick'?`可以先接住对方的话，再给一个明确但不僵硬的回应。\n\n例如先肯定对方的提议，再自然地确认时间或继续追问。`:level==='Max'?`我会先区分“对方明确表达的内容”和“我们只能推测的部分”。\n\n已知信息：最近的聊天涉及「${v.messages.filter(m=>m.who==='them').at(-1)?.text.slice(0,25)||'当前话题'}」。\n\n建议：①先回应对方真正提出的问题；②如果需要确认安排，问一个具体问题；③语气保持你们已有的轻松节奏。\n\n复核提示：仅凭一段聊天无法判断对方的全部意图，不要把猜测当成事实。`: `结合当前可见的聊天，我会建议你：\n\n① 先明确回应对方的核心提议，避免让对方等待不确定的答复。\n② 如果你也有兴趣，可以自然地推进一个具体安排，比如时间或地点。\n③ 保持你们此前对话的语气，不必刻意制造过多情绪。\n\n如果你愿意，我还可以把回复改成更自然、更温柔或更主动的版本。`;v.aiBusy=false;v.aiHistory.push({who:'ai',text:ans,level:levels[level].label,evidence:level!=='Quick'});if(c().id===id){renderConsult();notify('AI 咨询回复已就绪（模拟）')}},level==='Max'?2900:level==='Deep'?2000:1250)}
+ function syncFocusOptions(){ $('focusDetails').classList.toggle('hidden',!focusOptionsExpanded);$('focusExpandText').textContent=focusOptionsExpanded?'折叠':'展开';$('focusExpand').setAttribute('aria-expanded',String(focusOptionsExpanded));}
+ function focus(value){view=value?'focus':'workspace';document.body.classList.toggle('focus-mode',Boolean(value));syncFocusOptions();renderFocus();}
+ const settingGroups={
+  contacts:['contacts','portrait','listening','history','identity','memories'],
+  'ai-settings':['ai-settings','agent','self'],
+  connections:['connections','setup'],
+  'app-status':['app-status','preferences','health','overview']
+ };
+ function settingGroupFor(tab){return Object.keys(settingGroups).find(k=>settingGroups[k].includes(tab))||'contacts'}
+ function syncSettingsNav(){document.querySelectorAll('.drawer-tab').forEach(el=>el.classList.toggle('active',el.dataset.tab===settingGroupFor(drawerTab)));}
+ function openDrawer(tab='contacts'){drawerTab=tab;$('drawer').classList.remove('hidden');$('scrim').classList.remove('hidden');syncSettingsNav();renderDrawer()}
+ function closeDrawer(){$('drawer').classList.add('hidden');$('scrim').classList.add('hidden')}
+ function closeMobile(){$('sidebar').classList.remove('open');$('sideOverlay').classList.add('hidden');$('aiPanel').classList.remove('open');$('aiOverlay').classList.add('hidden')}
+ function renderDrawer(){const x=c();const intro=(title,desc)=>`<h3>${title}</h3><p class="intro">${desc}</p>`;let h='';const listenCnt=convs.filter(v=>v.account===selectedAccount&&v.listen).length;
+ const hub=(items)=>`<div class="setting-hub">${items.map(a=>`<button class="hub-card" data-action="tab" data-tab="${a[0]}"><strong>${a[1]} →</strong><small>${a[2]}</small></button>`).join('')}</div>`;
+ const roots=['contacts','ai-settings','connections','app-status'];
+ if(drawerTab==='contacts')h=intro(`联系人与会话 · ${escape(x.name)}`,'查看当前人物、监听与历史记录；这里不重复展示账户/会话的全局入口。')+hub([
+   ['portrait','人物画像','关系概况、近期变化、已确认事实与推测'],['listening','后台监听','多联系人监听目标与开关'],['memories','记忆与证据','编辑备注并查看证据来源'],['history','历史补录','按范围发起历史读取和去重'],['identity','身份校准','确认本人和联系人消息方向']]);
+ if(drawerTab==='ai-settings')h=intro('AI 与个性化','整个会话共用一套人设与分析深度；自定义规则在这里维护，不需要聊天页另放创建按钮。')+hub([
+   ['agent','人设与 Skills','新增、复制、AI 起草、启停和生命周期'],['self','我的表达','当前微信账号的长期表达偏好']]);
+ if(drawerTab==='connections')h=intro('连接与设备','普通使用者只需处理授权与连接故障；数据库和 Reader 的细节优先由应用自行管理。')+hub([
+   ['setup','连接向导','本机数据、微信、Reader、Codex、手机配对']]);
+ if(drawerTab==='app-status')h=intro('应用与状态','查看系统健康并调整日常偏好，不占据聊天首屏。')+hub([
+   ['health','运行状态','微信监听器、数据库、AI 与同步状态'],['preferences','使用偏好','预生成、消息提醒与其他日常选项']]);
+ if(!roots.includes(drawerTab)){ const group=settingGroupFor(drawerTab);const names={'contacts':'联系人与会话','ai-settings':'AI 与个性化','connections':'连接与设备','app-status':'应用与状态'};h=`<button class="drawer-back" data-action="tab" data-tab="${group}">← 返回${names[group]}</button>`;}
+ if(drawerTab==='overview')h=intro('一切都围绕当前联系人','这是产品功能入口，不是技术模块控制台。可以直接打开应用、选择联系人、查看聊天和 AI 建议；复杂设置只在需要时出现。')+`<div class="stat-grid"><div class="stat-item"><strong>${convs.filter(v=>v.account===selectedAccount).length}</strong><span>已发现会话</span></div><div class="stat-item"><strong>${listenCnt}</strong><span>持续监听</span></div><div class="stat-item"><strong>${x.memory.length}</strong><span>当前人物记忆</span></div></div><div class="group-heading">演示时可以试试</div><div class="setting-card"><div class="setting-main"><strong>同时监听三个联系人</strong><p>切换当前查看的人，不影响其余监听目标。进入“监听管理”可以任意启停。</p></div><button class="secondary" data-action="tab" data-tab="listening">去管理</button></div><div class="setting-card"><div class="setting-main"><strong>新消息让旧建议过期</strong><p>在顶部点击“模拟新消息”，观察中间建议区与极简模式的同步状态。</p></div><span class="conn-pill">仅原型实验台</span></div><div class="setting-card"><div class="setting-main"><strong>快速 / 平衡 / 深度 / Max</strong><p>回复人设与分析强度相互独立。Max 将展示历史检索与结果复核的过程。</p></div><button class="secondary" data-action="close-drawer">回工作区</button></div><div class="notice warn">本页面全部为虚构聊天和模拟任务，不会连接本机微信、读取实际历史、调用 Codex 或提交数据。交互用来确认最终应用应该如何工作。</div>`;
+ if(drawerTab==='listening')h=intro('后台监听管理','“当前查看谁”与“正在监听谁”是独立状态。会话切换不会重启监听器；新增监听目标后，其他联系人仍然持续采集。')+`<div class="notice">当前账号：${escape(activeAccount().name)}　·　已监听 ${listenCnt}/${convs.filter(v=>v.account===selectedAccount).length} 个会话（产品设计可扩展至 20 个）</div><div class="group-heading">我的会话 <span style="color:#8a9a94;font-size:11px">开关为模拟，不产生实际微信读取</span></div>`+convs.filter(v=>v.account===selectedAccount).map(v=>`<div class="setting-card"><span class="avatar" style="${avaStyle(v)}">${escape(v.letter)}</span><div class="setting-main"><strong>${escape(v.name)}</strong><p>${v.listen?'消息持续采集中 · 可在任意会话查看':'当前未监听 · 历史记录仍可查看'}</p></div><button class="toggle ${v.listen?'on':''}" data-action="toggle-listen" data-id="${v.id}" aria-label="${v.listen?'停止':'开始'}监听 ${escape(v.name)}" aria-pressed="${v.listen}"></button></div>`).join('');
+  if(drawerTab==='portrait'){
+  const p=portraitExamples[x.id]||{summary:'当前还没有足够的已核实资料来生成人物画像。可以补充经过核实的备注或继续积累聊天历史。',topics:[],preferences:[],plans:[],caution:'证据不足，不应推断对方性格或真实意图'};
+  const verified=x.identity==='confirmed';
+  const section=(title,items,empty)=>`<div class="portrait-section"><h4>${title}</h4>${items.length?items.map(item=>`<div class="portrait-item"><span class="portrait-bullet"></span><span>${escape(item)}</span></div>`).join(''):`<p class="portrait-empty">${empty}</p>`}</div>`;
+  h=intro(`${escape(x.name)} · 人物画像`,'一眼了解当前联系人。画像是一份有证据边界的动态摘要，不是记忆原始列表；聊天事实、用户备注与 AI 推测必须分开。')+
+  `<div class="portrait-hero"><div class="avatar" style="${avaStyle(x)}">${escape(x.letter)}</div><div><strong>${escape(x.name)}</strong><p>当前账号 · ${escape(activeAccount().name)}</p><span class="portrait-mark ${verified?'':'is-warn'}">${verified?'身份方向已确认':'身份未确认 · 限制画像生成'}</span></div></div>
+   <div class="portrait-summary"><div class="portrait-kicker">当前关系背景 · 演示摘要</div><p>${escape(p.summary)}</p><div class="portrait-source">来源范围：${x.memory.length} 条记忆线索与近期合成聊天 · 仅演示</div></div>
+   <div class="portrait-grid">${section('共同话题',p.topics,'目前尚无可确定的共同话题')}${section('近期计划',p.plans,'暂无已记录的近期计划')}${section('表达与互动偏好',p.preferences,'没有可靠偏好证据，不进行性格推断')}</div>
+   <div class="notice warn"><strong>推断边界</strong><div style="margin-top:5px">${escape(p.caution)}。AI 画像应展示证据、生成时间、校准版本与信心级别；未确认的内容不能进入强事实记忆。</div></div>
+   <div class="group-heading">持续维护与纠错</div>
+   <div class="setting-card"><div class="setting-main"><strong>根据新消息更新画像</strong><p>正式版异步检查新聊天、对比旧画像，展示有变化的摘要和证据，必须支持撤回。</p></div><button class="secondary" data-action="portrait-refresh" ${!verified?'disabled title="须先确认方向"':''}>${portraitRefreshes[x.id]?'已演示更新':'模拟更新'}</button></div>
+   <div class="setting-card"><div class="setting-main"><strong>审阅画像证据</strong><p>跳转到独立记忆条目、用户备注及聊天证据，不要让 AI 仅凭猜测编造结论。</p></div><button class="secondary" data-action="tab" data-tab="memories">查看证据</button></div>
+   <div class="group-heading">纠正或补充信息</div><textarea class="form-field" id="portraitCorrection" rows="3" placeholder="例如：周六还没有确认；请勿把邀约当作已约好。"></textarea><button class="primary" data-action="portrait-correct" style="margin-top:9px">保存为人工备注</button>
+   <div class="notice" style="margin-top:16px">正式版须把画像摘要与消息证据分开存储。此页面不会给联系人建立未经证实的敏感心理标签。</div>`;
+ }
+ if(drawerTab==='self'){
+  const prof=selfProfiles[selectedAccount];
+  h=intro('我的表达与沟通画像','这里属于当前微信账号的“我”，与联系人的画像不同。为 AI 提供你的表达习惯和边界，而不是替你定义人格。')+
+   `<div class="portrait-hero"><div class="account-logo">我</div><div><strong>${escape(activeAccount().name)}</strong><p>${activeAccount().active?'当前已连接':'历史账号 · 当前未连接'}</p></div></div>
+   <div class="group-heading">默认表达风格</div><textarea id="selfVoice" class="form-field" rows="3">${escape(prof.voice)}</textarea>
+   <div class="group-heading">重要沟通边界</div><textarea id="selfBoundary" class="form-field" rows="3">${escape(prof.boundary)}</textarea>
+   <div class="group-heading">其他个性化说明</div><textarea id="selfNotes" class="form-field" rows="3">${escape(prof.notes)}</textarea>
+   <div class="notice" style="margin:14px 0">“我的表达”决定默认语气与边界；联系人画像决定对方背景；单次人设和思考强度仍可单独覆盖。微信不会自动发送任何内容。</div>
+   <button class="primary" data-action="save-self" style="width:100%">保存表达设置（演示）</button>`;
+ }
+ if(drawerTab==='setup'){
+   const n=connectionStep,item=connectionSteps[n];
+   h=intro('连接中心 · 首次配置向导','从“编译与手动粘贴密钥”的开发流程，改成可诊断、可修复、可重试的正常应用连接流程。日常使用不应重复经过这些步骤。')+
+   `<div class="setup-progress">${connectionSteps.map((v,i)=>`<button class="setup-step ${i===n?'active':''} ${connectionChecks[i]?'done':''}" data-action="setup-step" data-index="${i}"><span>${connectionChecks[i]?'✓':i+1}</span><small>${escape(v.title)}</small></button>`).join('')}</div>
+   <div class="setup-main-card"><div class="setup-title">第 ${n+1} / ${connectionSteps.length} 步 <span class="portrait-mark">交互原型 · 模拟状态</span></div><h3>${escape(item.title)}</h3><p class="setup-summary">${escape(item.summary)}</p><p>${escape(item.detail)}</p><div class="setup-actions"><button class="primary" data-action="setup-check">${escape(item.action)}</button>${n>0?'<button class="secondary" data-action="setup-prev">上一步</button>':''}${n<connectionSteps.length-1?'<button class="secondary" data-action="setup-next">下一步</button>':'<button class="secondary" data-action="tab" data-tab="overview">返回工作区</button>'}</div><details class="setup-guide"><summary>需要自己完成哪些操作？ / 高级说明</summary><p>${escape(item.guide)}</p></details></div>
+   <div class="group-heading">所有连接的状态与归属</div>
+   ${connectionSteps.map((v,i)=>`<div class="setting-card"><div class="setting-main"><strong>${escape(v.title)}</strong><p>${escape(v.summary)}</p></div><span class="conn-pill ${connectionChecks[i]?'ok':'idle'}">${connectionChecks[i]?'演示检测完成':'待检测'}</span></div>`).join('')}
+   <div class="notice warn"><strong>安全与 Web Token：</strong>Reader ↔ API 仍使用独立机器凭据；PC 本机网页登录应自动获取受控会话，手机经短期配对获取独立可撤销凭据。原始 Web Bearer Token 不应让用户每次复制粘贴，也不应放进浏览器源码、URL 或聊天日志。</div>
+   <details class="setup-guide" style="margin-top:12px"><summary>专家选项：外部 PostgreSQL、模型地址与诊断信息</summary><p>只有用户主动启用“高级模式”时才显示数据库连接、CLI 执行路径、模型标识、代理和日志导出。修改必须由本机受控服务保存、校验与测试连接；前端不能直接接触数据库管理员密码或 Reader Token。</p></details>`;
+ }
+ if(drawerTab==='memories')h=intro(`${escape(x.name)} · 记忆证据`,'这里管理支持画像的原始线索、人工备注和可追溯证据。点击“人物画像”查看上层摘要。')+`<div class="notice">记忆将只属于「${escape(x.name)}」及当前账号。换联系人后不会带入其他人的背景。此处演示人工录入及证据展示。</div><div class="group-heading">当前记忆 · ${x.memory.length} 条</div><div class="memory-cards">${x.memory.length?x.memory.map((m,i)=>`<div class="memory-card"><div class="meta"><span>${escape(m.kind)}</span><button data-action="delete-memory" data-idx="${i}">删除</button></div><p>${escape(m.text)}</p><div class="evidence">${svg('book')}　${escape(m.evidence)}</div></div>`).join(''):'<div class="suggest-placeholder">暂无人物记忆。确认身份后可以按用户授权沉淀聊天背景。</div>'}</div><div class="group-heading">补充一条个人备注</div><textarea class="form-field" id="newMemory" rows="3" placeholder="例如：对方不喜欢临时改变约好的时间……" style="resize:vertical"></textarea><div style="display:flex;justify-content:flex-end;margin-top:9px"><button class="primary" data-action="add-memory">添加备注</button></div>`;
+ if(drawerTab==='identity')h=intro(`${escape(x.name)} · 发送者身份校准`,'只有确认“谁是本人、谁是联系人”，AI 的上下文和记忆才有可靠方向。身份校准按具体会话生效，不以 sender ID 的大小作全局规则。')+`<div class="notice ${x.identity==='pending'?'warn':''}">${x.identity==='pending'?'当前状态：待人工核对。前端可以显示默认气泡方向，但 AI 不能把猜测作为事实。':'当前状态：已校准。修改后应使相关消息和记忆按版本重新计算。'}</div><div class="group-heading">当前身份方向</div><div class="setting-card" style="justify-content:space-around"><div style="text-align:center"><div class="avatar" style="--av:#e1f2e8;--avink:#168568;margin:auto">我</div><p style="font-size:11px;color:#82948c">${x.swapped?'原联系人方向':'原本人方向'}</p></div><div style="font-size:25px;color:#96c5b4">⇄</div><div style="text-align:center"><div class="avatar" style="${avaStyle(x)};margin:auto">${escape(x.letter)}</div><p style="font-size:11px;color:#82948c">${x.swapped?'原本人方向':'原联系人方向'}</p></div></div><p class="intro" style="margin:12px 0">若左右归属反了，点击一次「互转身份」。提交后同步刷新气泡方向，既有记忆进入重新核验；不会修改原始微信记录。</p><button class="primary" data-action="swap-identity" style="width:100%">互转身份</button>`;
+ if(drawerTab==='history')h=intro(`${escape(x.name)} · 历史消息补录`,'主动补录当前联系人在本机已有的旧消息。实时监听和历史补录共享消息库，按来源身份幂等合并。')+`<div class="notice warn">演示范围：当前账号 · 当前一对一会话 · 文本记录。任何“完成”仅代表这次所选范围内的扫描完成，不代表微信历史完整。</div><div class="group-heading">补录范围</div><div class="setting-card"><div class="setting-main"><strong>最近 90 天</strong><p>最大 5,000 条 · 按时间分批 · 保留来源冲突证据</p></div></div><div class="setting-card"><div class="setting-main"><strong>本机全部历史</strong><p>不限时间窗口 · 单次最多 200,000 条 · 中断后从已入库位置续扫</p></div></div><div style="display:flex;gap:9px"><button class="primary" data-action="backfill" ${backfill.status==='running'?'disabled':''}>${backfill.status==='running'?'正在同步…':'同步历史消息'}</button><button class="secondary" data-action="backfill-full" ${backfill.status==='running'?'disabled':''}>导入本机全部历史</button><button class="secondary" data-action="reset-backfill">重置演示</button></div><div style="margin-top:21px" id="backfillStats"></div>`;
+   if(drawerTab==='agent')h=renderSkillCenter();if(drawerTab==='health')h=intro('运行状态','这里给普通用户看“哪些能力正在工作”，而不是展示数据库表、HTTP 端点或调试堆栈。出问题时应提供可执行的恢复操作。')+`<div class="group-heading">当前应用状态 · 模拟</div>`+[['本机微信 Reader','演示在线','正在模拟 ${listenCnt} 个监听会话'],['PostgreSQL 消息库','演示就绪','消息和来源去重归档'],['AI 任务执行','演示就绪','Quick / Balanced / Deep / Max'],['长期记忆沉淀','待启用','需要身份确认、任务状态和证据追溯'],['手机安全访问','尚未接入','正式版需要 HTTPS 与安全配对']].map(a=>`<div class="setting-card"><span class="spark" data-icon="radio"></span><div class="setting-main"><strong>${a[0]}</strong><p>${a[2]}</p></div><span style="font-size:11px;white-space:nowrap;color:${a[1]==='演示就绪'||a[1]==='演示在线'?'#279174':'#b17e4e'}">${a[1]}</span></div>`).join('')+`<div class="notice">本 Demo 完全离线运行，状态是界面样例，不代表实际 Reader、数据库或模型已连接。未来若断开微信，应将原因、受影响会话、最后心跳和恢复动作显示在这里。</div>`;
+ if(drawerTab==='preferences')h=intro('应用偏好与体验设置','正常应用应保存个人设置，不把启动参数、API Token、Python 运行环境直接展示给用户。此原型仅用于预览交互。')+`<div class="group-heading">日常使用</div><div class="setting-card"><div class="setting-main"><strong>新消息到达时提前准备建议</strong><p>未来应后台生成并缓存 Quick 建议，减少等待。原型只展示开关状态。</p></div><button class="toggle ${preferences.autoPrep?'on':''}" data-action="toggle-pref" data-key="autoPrep"></button></div><div class="setting-card"><div class="setting-main"><strong>桌面新消息提示</strong><p>只提示联系人的新消息，不公开聊天正文。</p></div><button class="toggle ${preferences.notifications?'on':''}" data-action="toggle-pref" data-key="notifications"></button></div><div class="setting-card"><div class="setting-main"><strong>快速问答作为 AI 对话的一部分</strong><p>三条回复只在 AI 咨询中出现，极简模式使用同一批次。</p></div><span style="color:#328463;font-size:12px;font-weight:700">默认</span></div><div class="group-heading">系统与连接</div><div class="setting-card"><div class="setting-main"><strong>本机数据与账号绑定</strong><p>聊天历史、联系人画像和 AI 会话分账号隔离。</p></div><span style="color:#278c70;font-weight:700;font-size:12px">已设计</span></div><div class="setting-card"><div class="setting-main"><strong>手机局域网安全配对</strong><p>正式版需 HTTPS、安全配对及有限访问权限；不要求手动复制 Bearer Token。</p></div><span style="color:#b07c4b;font-size:12px">待实现</span></div><div class="notice">设计原则：始终只读微信，建议由你复制后手动粘贴与发送。任何模式均不提供微信自动代发。</div>`;
+ if(!roots.includes(drawerTab)){const group=settingGroupFor(drawerTab);const names={'contacts':'联系人与会话','ai-settings':'AI 与个性化','connections':'连接与设备','app-status':'应用与状态'};h=`<button class="drawer-back" data-action="tab" data-tab="${group}">← 返回${names[group]}</button>`+h;}
+ $('drawerContent').innerHTML=h;hydrateIcons($('drawerContent'));if(drawerTab==='history')renderBackfillStats();}
+ const preferences={autoPrep:true,notifications:false,quickRoute:'fast'};const skillSettings={tone:true,evidence:true,topics:true,boundary:true};
+ function renderBackfillStats(){const box=$('backfillStats');if(!box)return;if(backfill.status==='idle'){box.innerHTML='<div class="suggest-placeholder">尚未开始本次历史补录。点击“同步历史消息”查看任务状态和对账结果。</div>';return}box.innerHTML=`${backfill.resumedFrom?`<div class="notice" style="margin-bottom:11px">续扫：本机该范围累计已扫描 ${backfill.resumedFrom+Math.floor(backfill.percentage*1.31)} 条，含此前中断的扫描（演示数据）。</div>`:''}<div class="group-heading">本次任务 · ${backfill.status==='running'?'进行中':'已完成（模拟）'}　${backfill.percentage}%</div><div class="progress-track"><div class="progress-fill" style="width:${backfill.percentage}%"></div></div><div class="stat-grid" style="margin-top:12px"><div class="stat-item"><strong>${Math.floor(backfill.percentage*1.31)}</strong><span>已扫描</span></div><div class="stat-item"><strong>${Math.floor(backfill.percentage*.96)}</strong><span>已匹配</span></div><div class="stat-item"><strong>${Math.floor(backfill.percentage*.35)}</strong><span>新补录</span></div></div>${backfill.status==='done'?'<p style="color:#668b77;font-size:12px;margin-top:13px">'+(backfill.full?'本机可读历史已全部扫描完成':'本次有界扫描完成')+'。0 条需人工核对，原有消息未被覆盖。</p>':'<p style="color:#81968c;font-size:12px;margin-top:13px">正在读取本机历史并对账；不会发送任何微信消息。</p>'}`}
+ function backfillStart(full){if(backfill.status==='running')return;backfill={status:'running',percentage:0,full:!!full,resumedFrom:full?4200:0};renderDrawer();clearInterval(backfillTimer);backfillTimer=setInterval(()=>{backfill.percentage=Math.min(100,backfill.percentage+17);if(backfill.percentage>=100){backfill.status='done';clearInterval(backfillTimer);c().historyBackfilled=true;notify('模拟历史补录已完成')}renderBackfillStats();if(backfill.status==='done')renderDrawer()},500)}
+ function toggleListen(id){const v=convs.find(y=>y.id===id);if(!v)return;v.listen=!v.listen;renderConvs();renderChatHeader();renderDrawer();notify(`${v.name} 已${v.listen?'加入':'退出'}后台监听（模拟）`)}
+ function changeAccount(id){const a=accounts.find(z=>z.id===id);if(!a)return;selectedAccount=id;const first=convs.find(z=>z.account===id);if(first)selectedConv=first.id;fullRender();if(!a.active)notify('此账号仅为界面演示：未登录，不会实际读取消息');else notify(`已切换到 ${a.name}`)}
+ function handleAction(e){const el=e.target.closest('[data-action]');if(!el)return;const action=el.dataset.action;if(action.startsWith('skill-')&&skillAction(el))return; if(action==='setup-step'){connectionStep=Math.max(0,Math.min(3,Number(el.dataset.index)||0));renderDrawer();return}if(action==='setup-next'){connectionStep=Math.min(3,connectionStep+1);renderDrawer();return}if(action==='setup-prev'){connectionStep=Math.max(0,connectionStep-1);renderDrawer();return}if(action==='setup-check'){connectionChecks[connectionStep]=true;renderDrawer();notify('已完成模拟检测：真实应用应调用本机诊断接口');return}if(action==='portrait-refresh'){if(c().identity!=='confirmed'){notify('请先确认身份方向');return}portraitRefreshes[c().id]=true;renderDrawer();notify('人物画像已模拟更新；正式版需显示变化与证据');return}if(action==='portrait-correct'){const val=$('portraitCorrection')?.value.trim();if(!val){notify('请先填写需要纠正的事实或备注');return}c().memory.unshift({kind:'用户更正',text:val,evidence:'当前用户主动更正 · 不能直接当作聊天事实'});renderDrawer();notify('已保存为人工备注（演示），待用于画像核验');return}if(action==='save-self'){const p=selfProfiles[selectedAccount];p.voice=$('selfVoice')?.value.trim()||p.voice;p.boundary=$('selfBoundary')?.value.trim()||p.boundary;p.notes=$('selfNotes')?.value.trim()||p.notes;renderDrawer();notify('已保存此账号的表达偏好（演示）');return}if(action==='switch'){switchConv(el.dataset.id);return}if(action==='filter'){filter=el.dataset.filter;document.querySelectorAll('[data-filter]').forEach(b=>b.classList.toggle('active',b.dataset.filter===filter));renderConvs();return}if(action==='prototype'){$('prototypePanel').classList.toggle('hidden');return}if(action==='prototype-close'){$('prototypePanel').classList.add('hidden');return}if(action==='simulate'){simulateMessage();return}if(action==='focus'){focus(true);return}if(action==='workspace'){focus(false);closeDrawer();return}if(action==='focus-expand'){focusOptionsExpanded=!focusOptionsExpanded;syncFocusOptions();return}if(action==='focus-choose'){focus(false);$('sidebar').classList.add('open');$('sideOverlay').classList.remove('hidden');return}if(action==='generate'){generate();return}if(action==='cancel-generate'){cancelGenerate();return}if(action==='copy'){copy(Number(el.dataset.idx));return}if(action==='ask'){ask();return}if(action==='ask-example'){ask(el.dataset.q);return}if(action==='older'){olderLoaded.add(c().id);renderMessages(false);notify('已加载更早的演示消息');return}if(action==='drawer'){openDrawer(el.dataset.tab||'overview');return}if(action==='tab'){drawerTab=el.dataset.tab;syncSettingsNav();renderDrawer();return}if(action==='close-drawer'){closeDrawer();return}if(action==='mobile-contacts'){$('sidebar').classList.toggle('open');$('sideOverlay').classList.toggle('hidden');$('aiPanel').classList.remove('open');$('aiOverlay').classList.add('hidden');return}if(action==='ai-open'){$('aiPanel').classList.add('open');$('aiOverlay').classList.remove('hidden');return}if(action==='ai-close'){$('aiPanel').classList.remove('open');$('aiOverlay').classList.add('hidden');return}if(action==='toggle-listen'){toggleListen(el.dataset.id);return}if(action==='swap-identity'){const v=c();const okay=window.confirm(`确认互换「${v.name}」会话里的本人/联系人方向？这次操作仅影响该会话及关联记忆。`);if(okay){v.swapped=!v.swapped;v.identity='confirmed';v.revision++;renderChatHeader();renderSuggestion();renderDrawer();notify('已互转身份并更新建议校准版本（演示）')}return}if(action==='add-memory'){const val=$('newMemory')?.value.trim();if(!val){notify('请先输入要保存的备注');return}c().memory.unshift({kind:'用户备注',text:val,evidence:'用户手动录入 · 不作为聊天事实'});renderDrawer();notify('人物备注已保存（仅当前演示页）');return}if(action==='delete-memory'){c().memory.splice(Number(el.dataset.idx),1);renderDrawer();notify('已移除该条演示记忆');return}if(action==='backfill'){backfillStart(false);return}if(action==='backfill-full'){backfillStart(true);return}if(action==='reset-backfill'){backfill={status:'idle',percentage:0,full:false,resumedFrom:0};clearInterval(backfillTimer);renderDrawer();return}if(action==='toggle-skill'){const key=el.dataset.key;skillSettings[key]=!skillSettings[key];renderDrawer();notify('Skill 偏好已更新（演示）');return}if(action==='toggle-pref'){const key=el.dataset.key;preferences[key]=!preferences[key];renderDrawer();notify('偏好已更新（演示）');return}}
+ document.addEventListener('click',handleAction);
+ $('drawerContent').addEventListener('change',e=>{if(e.target.id==='quickRouteSelect'){preferences.quickRoute=e.target.value;notify('快速回复路由已切换（演示）')}});
+ $('contactSearch').addEventListener('input',renderConvs);
+ $('accountSelect').addEventListener('change',e=>changeAccount(e.target.value));
+ syncPersonas();
+ $('personaSelect').addEventListener('change',()=>{c().persona=$('personaSelect').value;renderSuggestion();});
+ $('thinkingSelect').addEventListener('change',()=>{c().level=$('thinkingSelect').value;renderSuggestion();});
+ $('focusPersonaSelect').addEventListener('change',e=>{c().persona=e.target.value;$('personaSelect').value=e.target.value;renderSuggestion();});
+ $('focusLevelSelect').addEventListener('change',e=>{c().level=e.target.value;$('thinkingSelect').value=e.target.value;renderSuggestion();});
+ $('aiInput').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();ask()}});
+ hydrateIcons();fullRender();
+})();
+</script>
+</body>
+</html>
