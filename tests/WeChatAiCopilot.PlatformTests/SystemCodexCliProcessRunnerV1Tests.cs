@@ -34,6 +34,8 @@ public sealed class SystemCodexCliProcessRunnerV1Tests
     [InlineData("SYNTHETIC_SECRET_MARKER unknown config key", "CliConfiguration")]
     [InlineData("SYNTHETIC_SECRET_MARKER invalid JSON schema", "SchemaRejected")]
     [InlineData("SYNTHETIC_SECRET_MARKER unrelated child diagnostic", "Unknown")]
+    [InlineData("SYNTHETIC_SECRET_MARKER Error: error sending request for url (https://model.invalid/v1)", "NetworkConnection")]
+    [InlineData("SYNTHETIC_SECRET_MARKER failed to refresh available models: request timed out", "NetworkConnection")]
     public async Task RunAsync_ClassifiesBoundedStderrWithoutReturningRawText(
         string stderrText,
         string expectedCategoryName)
@@ -59,20 +61,49 @@ public sealed class SystemCodexCliProcessRunnerV1Tests
         }
     }
 
-    [Fact]
-    public async Task RunAsync_MapsStderrBeyondCaptureBoundToUnknown()
+    [Theory]
+    [InlineData("AuthenticationMissing")]
+    [InlineData("NetworkConnection")]
+    public async Task RunAsync_ClassifiesPhraseAtEitherEndOfLongStderrWithoutReturningRawText(
+        string expectedCategoryName)
     {
+        var expectedCategory = Enum.Parse<CodexCliFailureCategoryV1>(expectedCategoryName);
+        var noise = new string('x', 12 * 1024);
+        // A chatty CLI puts the decisive line either first or last. Both must still be classified:
+        // bailing out on long output turned every real network failure into a useless generic code.
+        var stderrText = expectedCategoryName == "AuthenticationMissing"
+            ? "SYNTHETIC_SECRET_MARKER not logged in" + noise
+            : noise + "SYNTHETIC_SECRET_MARKER ECONNREFUSED connection refused";
         var workingDirectory = CreateTemporaryDirectory();
         try
         {
-            var stderrText = "not logged in " + new string('x', 9 * 1024);
             var result = await new SystemCodexCliProcessRunnerV1().RunAsync(
                 CreateRequest(workingDirectory, stderrText),
                 CancellationToken.None);
 
             Assert.Equal(19, result.ExitCode);
+            Assert.Equal(expectedCategory, result.FailureCategory);
+            Assert.DoesNotContain("SYNTHETIC_SECRET_MARKER", result.ToString());
+        }
+        finally
+        {
+            DeleteTemporaryDirectory(workingDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task RunAsync_KeepsLongUnrelatedStderrUnknownWithoutLeakingText()
+    {
+        var workingDirectory = CreateTemporaryDirectory();
+        try
+        {
+            var result = await new SystemCodexCliProcessRunnerV1().RunAsync(
+                CreateRequest(workingDirectory, "SYNTHETIC_SECRET_MARKER " + new string('x', 12 * 1024)),
+                CancellationToken.None);
+
+            Assert.Equal(19, result.ExitCode);
             Assert.Equal(CodexCliFailureCategoryV1.Unknown, result.FailureCategory);
-            Assert.DoesNotContain("not logged in", result.ToString());
+            Assert.DoesNotContain("SYNTHETIC_SECRET_MARKER", result.ToString());
         }
         finally
         {

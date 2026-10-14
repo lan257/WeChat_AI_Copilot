@@ -478,7 +478,8 @@ internal static class CodexCliExecutableResolverV1
 
 internal sealed class SystemCodexCliProcessRunnerV1 : ICodexCliProcessRunnerV1
 {
-    private const int MaximumCapturedStderrBytes = 8 * 1024;
+    private const int StderrHeadBytes = 4 * 1024;
+    private const int StderrTailBytes = 4 * 1024;
 
     public async Task<CodexCliProcessResultV1> RunAsync(CodexCliProcessRequestV1 request, CancellationToken cancellationToken)
     {
@@ -579,10 +580,16 @@ internal sealed class SystemCodexCliProcessRunnerV1 : ICodexCliProcessRunnerV1
 
     private static async Task<CodexCliFailureCategoryV1> DrainAndClassifyStderrAsync(Stream stream)
     {
-        var captured = new byte[MaximumCapturedStderrBytes];
+        // Codex prints retry noise before the decisive line, so "more than the capture bound" used to
+        // mean "give up" and every real network failure left as an unhelpful generic exit code.
+        // Keep a bounded head and a bounded rolling tail instead: still fixed memory, still raw text
+        // never leaves this function.
+        var head = new byte[StderrHeadBytes];
+        var tail = new byte[StderrTailBytes];
         var buffer = new byte[2048];
-        var capturedCount = 0;
-        var exceededBound = false;
+        var headCount = 0;
+        var tailCount = 0;
+        var tailStart = 0;
         try
         {
             while (true)
@@ -593,22 +600,48 @@ internal sealed class SystemCodexCliProcessRunnerV1 : ICodexCliProcessRunnerV1
                     break;
                 }
 
-                var copyCount = Math.Min(read, captured.Length - capturedCount);
-                if (copyCount > 0)
+                var chunk = buffer.AsSpan(0, read);
+                var headRoom = head.Length - headCount;
+                if (headRoom > 0)
                 {
-                    buffer.AsSpan(0, copyCount).CopyTo(captured.AsSpan(capturedCount));
-                    capturedCount += copyCount;
+                    var take = Math.Min(headRoom, chunk.Length);
+                    chunk.Slice(0, take).CopyTo(head.AsSpan(headCount));
+                    headCount += take;
                 }
 
-                if (copyCount < read)
+                var firstPart = Math.Min(chunk.Length, tail.Length - tailStart);
+                chunk.Slice(0, firstPart).CopyTo(tail.AsSpan(tailStart));
+                if (chunk.Length > firstPart)
                 {
-                    exceededBound = true;
+                    chunk.Slice(firstPart).CopyTo(tail.AsSpan(0, chunk.Length - firstPart));
                 }
+
+                tailStart = (tailStart + chunk.Length) % tail.Length;
+                tailCount = Math.Min(tailCount + chunk.Length, tail.Length);
             }
 
-            return exceededBound
-                ? CodexCliFailureCategoryV1.Unknown
-                : CodexCliStderrClassifierV1.Classify(captured.AsSpan(0, capturedCount));
+            var category = CodexCliStderrClassifierV1.Classify(head.AsSpan(0, headCount));
+            if (category != CodexCliFailureCategoryV1.Unknown)
+            {
+                return category;
+            }
+
+            if (tailCount < tail.Length)
+            {
+                return CodexCliStderrClassifierV1.Classify(tail.AsSpan(0, tailCount));
+            }
+
+            var linear = new byte[tail.Length];
+            tail.AsSpan(tailStart).CopyTo(linear);
+            tail.AsSpan(0, tailStart).CopyTo(linear.AsSpan(tail.Length - tailStart));
+            try
+            {
+                return CodexCliStderrClassifierV1.Classify(linear);
+            }
+            finally
+            {
+                System.Security.Cryptography.CryptographicOperations.ZeroMemory(linear);
+            }
         }
         catch (IOException)
         {
@@ -620,7 +653,8 @@ internal sealed class SystemCodexCliProcessRunnerV1 : ICodexCliProcessRunnerV1
         }
         finally
         {
-            System.Security.Cryptography.CryptographicOperations.ZeroMemory(captured);
+            System.Security.Cryptography.CryptographicOperations.ZeroMemory(head);
+            System.Security.Cryptography.CryptographicOperations.ZeroMemory(tail);
             System.Security.Cryptography.CryptographicOperations.ZeroMemory(buffer);
         }
     }

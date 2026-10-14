@@ -577,6 +577,20 @@ function Start-FormalApi($scope, $secrets) {
             $noProxy = if ($network -and -not [string]::IsNullOrWhiteSpace([string]$network.noProxy)) { [string]$network.noProxy } else { '127.0.0.1,localhost' }
             $env:NO_PROXY = $noProxy
             Write-Host "AI 连接将使用本机 network.json 指定的代理出口。"
+            # A dead local proxy otherwise shows up minutes later as an AI task that just fails, and
+            # the person who cannot tell why. Say it once at startup instead.
+            $proxyEndpoint = $proxyUrl -replace '^https?://', ''
+            $proxyHost = $proxyEndpoint -replace ':.*$', ''
+            $proxyPort = if ($proxyEndpoint -match ':([0-9]{1,5})$') { [int]$Matches[1] } else { 80 }
+            $proxyReachable = $false
+            $probe = New-Object System.Net.Sockets.TcpClient
+            try {
+                $connect = $probe.ConnectAsync($proxyHost, $proxyPort)
+                $proxyReachable = $connect.Wait(700) -and -not $connect.IsFaulted -and $probe.Connected
+            } catch { $proxyReachable = $false } finally { $probe.Dispose() }
+            if (-not $proxyReachable) {
+                Write-Host ("警告：本机代理 " + $proxyHost + ":" + $proxyPort + " 现在连不上，AI 任务大概率会以 CODEX_CLI_NETWORK_FAILED 失败。先启动代理程序再重新双击启动；不需要代理就删除 network.json 改为直连。")
+            }
         }
         elseif (-not [string]::IsNullOrWhiteSpace($proxyUrl)) {
             Write-Host '本机 network.json 中的代理地址格式不可用，已按直连启动。'

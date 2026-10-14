@@ -27,7 +27,12 @@ internal static class CodexCliStderrClassifierV1
         "econnreset",
         "etimedout",
         "enotfound",
-        "eai_again"
+        "eai_again",
+        // What a dead local proxy actually looks like: reqwest wraps the connect failure as
+        // "error sending request for url (...)", and refreshing the model list says "request timed out".
+        // Without these the user sees an unexplained generic exit code instead of "egress is down".
+        "error sending request",
+        "request timed out"
     ];
 
     private static readonly string[] ConfigurationPhrases =

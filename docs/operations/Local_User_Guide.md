@@ -55,9 +55,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File Install-FromPackage.ps1 -Pac
 
 分析深度分快速 / 平衡 / 深度 / Max，对应读取的近期消息条数与是否复核。**快速档一定只有一次模型调用**，即使启用了复核类 Skill 也不会追加复核；平衡和深度在启用复核类 Skill 时多一次复核，Max 始终独立复核。运行状态里能看到最近一次建议的分段耗时。
 
-如果任务长时间停在「正在执行模型」并最终报 `RUNTIME_TIMEOUT`，通常是这台电脑访问模型服务的网络出口不通。需要走本机代理时，在
-`%LOCALAPPDATA%\WeChatAiCopilot\Formal\network.json` 写入
+需要走本机代理时，在 `%LOCALAPPDATA%\WeChatAiCopilot\Formal\network.json` 写入
 `{"proxyUrl":"http://127.0.0.1:端口","noProxy":"127.0.0.1,localhost"}` 后重启；没有这个文件时按直连启动。
+代理只给 AI 连接使用，微信读取仍然只在这台电脑上进行。
+
+**出口不通时会直接说清楚**：启动器在配置代理后会立刻探测那个端口连不连得上，连不上就在启动窗口写一行警告；
+之后 AI 任务失败会显示“AI 连不上模型服务：本机代理或网络出口没有就绪”（错误码 `CODEX_CLI_NETWORK_FAILED`）。
+任务长时间停在「正在执行模型」最终报 `RUNTIME_TIMEOUT` 也通常是同一个原因。把界面上的英文错误码原样发回来即可，不用截图聊天内容。
 
 ## 极简模式
 

@@ -7,6 +7,9 @@ const messages = {
   NETWORK_UNAVAILABLE:'无法连接本机应用，请确认本机应用已启动，或在连接设置中检测并重试。',
   SKILL_NOT_APPROVED:'这份 AI 草稿尚未确认启用。', CALIBRATION_VERSION_CONFLICT:'身份版本已变化，请重新核对。'
   ,SKILL_DEVICE_SCOPE_FORBIDDEN:'手机设备只能编辑已授权的当前联系人 Skill；账号通用规则请在电脑上修改。'
+  ,CODEX_CLI_NETWORK_FAILED:'AI 连不上模型服务：本机代理或网络出口没有就绪。启动窗口里会提示代理是否连得上，配好之后再试一次即可。'
+  ,CODEX_CLI_AUTH_REQUIRED:'Codex CLI 还没有登录模型服务，请先在这台电脑上完成 Codex 登录。'
+  ,RUNTIME_TIMEOUT:'AI 超过本机设定的单次时限，通常是模型出口太慢或不通；稍后重试，或改用更快的分析深度。'
 };
 export class ApiError extends Error {
   constructor(code, detail, status) { super(messages[code] || detail || `请求失败（${code}）`); this.code=code; this.status=status; }
