@@ -1,6 +1,6 @@
 # 决策记录 · 可恢复的历史扫描与本机全量导入（ADR-2026-10-14-02）
 
-- 状态：**已采纳，实现中**
+- 状态：**已实现，并在真实微信数据上验收**（2026-10-14；见第 5 节）
 - 依据：`docs/product/proposals/2026-10-14_full-local-history-import.md`（REQ-2026-10-14-01）与
   `临时文件/WeChat_AI_Copilot_V8_Code_Optimization_Review_2026-10-14.md` §1.1、§2、§5。
 - 不在范围：微信云端历史、群聊与公众号、非文本正文与附件、任何自动发送。
@@ -79,6 +79,25 @@
 ## 5. 验收
 
 1. 隔离库：创建全量任务 → 送两批后让任务“断电”（进程退出）→ 新任务从游标续扫，不重复导入已入库行。
+   已通过：`V6HistoryJobTests.FullLocalHistoryJobPersistsItsScanCursorAndTheNextAttemptResumesFromIt`
+   断言游标 `last_local_id=41`，第二个任务的 `/next` 带回 `resumeCursors=[{Msg_…,41}]`。
 2. 有界窗口任务的 90 天与 5,000 条校验仍然生效（回归不变）。
+   已通过：同一条用例断言 120 天请求返回 400；`reader.py` 侧由
+   `test_history_queue_keeps_the_ninety_day_limit_for_bounded_windows` 与半开区间用例覆盖。
 3. 真实会话：对已授权联系人执行一次全量导入，比对读取器报告的本机文本行数与应用内行数一致。
+   已通过。「爸爸」`Completed / read=109 / matched=109 / created=0 / failed=0`，游标累计 109；
+   紧接着的第二个全量任务 `read=0`，证明确实从已入库位置继续而不是重扫。
+   「王继森」`Partial / read=442 / matched=184 / created=257 / needsReview=1 / failed=0`，
+   该会话 `messageSetRevision` 368 → 809，应用内现有 447 条可读消息，跨度 2025-11-03 → 2026-10-14
+   （改动前的 90 天窗口取不到去年记录，正是使用者报的问题）。
 4. 界面显示续扫进度与最终覆盖状态。
+   已通过（真实数据）：正式 `wwwroot/v8` 补录页渲染“续扫：本机该范围累计已扫描 109 条，含此前中断的扫描”，
+   并显示“范围：本机全部历史”。界面差异按门禁另以 V8.2 候选送审。
+   注意：历史覆盖仍显示 Unknown —— `ReadJobAsync` 里 `coverage` 是硬编码占位，与本次改动无关，尚未修。
+
+## 6. 仍未覆盖
+
+- 真实进程被杀后的续扫：只验证了“新任务从持久游标继续”，没有在中途真的杀掉读取器。游标写在**接受批次的事务内**，
+  逻辑上不会跳过未入库行，但这条路径没有实测。
+- 单个会话数年历史的导入耗时与磁盘增量：王继森 442 条在 1 分钟内完成，更大库没有样本。
+- 未授权会话拒绝：沿用既有 403/409 语义与用例，没有为 `fullLocalHistory` 单独新增越权用例。
