@@ -54,6 +54,9 @@ public static class HistoryJobEndpointsV1
         reader.MapGet("/next",async(NpgsqlDataSource db,CancellationToken ct)=>{
             await using var conn=await db.OpenConnectionAsync(ct);await using var tx=await conn.BeginTransactionAsync(ct);
             await using(var expire=new NpgsqlCommand("UPDATE copilot.history_jobs SET status='Failed',error_code='READER_JOB_LEASE_EXPIRED',updated_at=now(),completed_at=now() WHERE requested_by_web AND status='Running' AND updated_at<now()-interval '10 minutes';",conn,tx))await expire.ExecuteNonQueryAsync(ct);
+            // Every accepted batch refreshes updated_at, so a reader that is alive but never finishes
+            // would renew its lease forever and hold the single claim slot for all other conversations.
+            await using(var deadline=new NpgsqlCommand("UPDATE copilot.history_jobs SET status='Failed',error_code='READER_JOB_DEADLINE_EXCEEDED',updated_at=now(),completed_at=now() WHERE requested_by_web AND status='Running' AND started_at<now()-interval '60 minutes';",conn,tx))await deadline.ExecuteNonQueryAsync(ct);
             await using var cmd=new NpgsqlCommand("""
                 WITH selected AS(SELECT h.account_id,h.conversation_id,h.job_id FROM copilot.history_jobs h
                 JOIN copilot.chat_accounts a ON a.id=h.account_id

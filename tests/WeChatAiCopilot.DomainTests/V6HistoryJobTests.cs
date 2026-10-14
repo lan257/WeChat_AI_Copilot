@@ -72,6 +72,42 @@ public sealed class V6HistoryJobTests
     }
 
     [V6SessionsPostgresFact]
+    public async Task RunningHistoryJobReleasesItsClaimOnlyAfterTheTotalExecutionDeadline()
+    {
+        await using var db=TestDatabase();await MigrationRunner.ApplyPendingAsync(db);
+        var scope=await CreateScope(db);var token=await Session(db,scope);
+        var app=Application(db,scope.AccountExternalId);
+        await using var disposableApp=app;
+        var create=new HistoryJobEndpointsV1.CreateHistoryJobV1(scope.AccountId,scope.ConversationId,DateTimeOffset.UtcNow.AddDays(-1),DateTimeOffset.UtcNow,5000);
+        var pending=await Invoke(app,"POST","/api/history/jobs",create,token);
+        var id=JsonDocument.Parse(pending.Body).RootElement.GetProperty("jobId").GetString()!;
+        Assert.Equal(200,(await Invoke(app,"GET","/api/reader/history-jobs/next",null,null)).Status);
+
+        // Accepted batches refresh updated_at, so a slow-but-alive reader would renew forever and keep
+        // the only claim slot; aging started_at is what the total deadline looks at.
+        await using(var age=db.CreateCommand("UPDATE copilot.history_jobs SET started_at=now()-interval '61 minutes' WHERE job_id=@id;"))
+        {age.Parameters.AddWithValue("id",id);await age.ExecuteNonQueryAsync();}
+        Assert.Equal(204,(await Invoke(app,"GET","/api/reader/history-jobs/next",null,null)).Status);
+
+        await using var check=db.CreateCommand("SELECT status,error_code,completed_at IS NOT NULL,updated_at>started_at FROM copilot.history_jobs WHERE job_id=@id;");
+        check.Parameters.AddWithValue("id",id);
+        await using var reader=await check.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal("Failed",reader.GetString(0));
+        Assert.Equal("READER_JOB_DEADLINE_EXCEEDED",reader.GetString(1));
+        Assert.True(reader.GetBoolean(2));
+        Assert.True(reader.GetBoolean(3));
+
+        // A fresh job must not be affected by the same sweep.
+        var fresh=await Invoke(app,"POST","/api/history/jobs",create,token);
+        var freshId=JsonDocument.Parse(fresh.Body).RootElement.GetProperty("jobId").GetString()!;
+        Assert.Equal(200,(await Invoke(app,"GET","/api/reader/history-jobs/next",null,null)).Status);
+        await using var stillRunning=db.CreateCommand("SELECT status FROM copilot.history_jobs WHERE job_id=@id;");
+        stillRunning.Parameters.AddWithValue("id",freshId);
+        Assert.Equal("Running",await stillRunning.ExecuteScalarAsync());
+    }
+
+    [V6SessionsPostgresFact]
     public async Task LocalBootstrapConsumesOneGrantAndRejectsWrongOriginsAndReplay()
     {
         await using var db=TestDatabase();await MigrationRunner.ApplyPendingAsync(db);
