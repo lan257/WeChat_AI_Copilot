@@ -290,7 +290,20 @@ export async function cancelTask(kind) {
 }
 export async function copy(index) {
   const text=current().suggestions?.suggestions?.[index]?.text;if(!text)return;
-  try{await navigator.clipboard.writeText(text);notify('已复制，粘贴后由你手动发送。');}catch{notify('复制失败，请允许浏览器访问剪贴板后重试。');}
+  let done=false;
+  try { if(navigator.clipboard?.writeText){ await navigator.clipboard.writeText(text); done=true; } }
+  catch { /* Clipboard permission may be withheld; fall back to a selection copy. */ }
+  if(!done){
+    const area=document.createElement('textarea');
+    area.value=text;area.readOnly=true;area.setAttribute('aria-hidden','true');
+    area.style.cssText='position:fixed;top:0;left:-9999px;opacity:0';
+    document.body.appendChild(area);area.select();area.setSelectionRange(0,text.length);
+    try { done=document.execCommand('copy'); } catch { done=false; }
+    area.remove();
+  }
+  if(done){ notify('已复制，粘贴后由你手动发送。'); return; }
+  try { window.prompt('浏览器未开放剪贴板权限，请手动复制：',text); } catch { /* Sandboxed frames can block prompt. */ }
+  notify('当前浏览器限制自动复制，请在弹出的文本里手动选择复制。');
 }
 export async function choosePersona(id) {
   const s=current(),epoch=(s.selectionEpoch||0)+1;s.selectionEpoch=epoch;

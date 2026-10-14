@@ -477,6 +477,26 @@ function Start-FormalApi($scope, $secrets) {
     $env:Authentication__ReaderBearerToken = $secrets.ReaderToken
     $env:Web__BootstrapGrantPath = Join-Path $stateRoot 'web-bootstrap.json'
     $env:Operations__StateRoot = $stateRoot
+
+    # Optional local network egress for the AI CLI. Without network.json the app starts exactly as before.
+    $networkPath = Join-Path $stateRoot 'network.json'
+    if (Test-Path -LiteralPath $networkPath -PathType Leaf) {
+        $network = $null
+        try { $network = Get-Content -Raw -LiteralPath $networkPath | ConvertFrom-Json } catch { $network = $null }
+        $proxyUrl = if ($network) { [string]$network.proxyUrl } else { '' }
+        if ($proxyUrl -match '^https?://[A-Za-z0-9.\-]+(:[0-9]{1,5})?$') {
+            $env:HTTP_PROXY = $proxyUrl
+            $env:HTTPS_PROXY = $proxyUrl
+            $env:ALL_PROXY = $proxyUrl
+            $noProxy = if ($network -and -not [string]::IsNullOrWhiteSpace([string]$network.noProxy)) { [string]$network.noProxy } else { '127.0.0.1,localhost' }
+            $env:NO_PROXY = $noProxy
+            Write-Host "AI 连接将使用本机 network.json 指定的代理出口。"
+        }
+        elseif (-not [string]::IsNullOrWhiteSpace($proxyUrl)) {
+            Write-Host '本机 network.json 中的代理地址格式不可用，已按直连启动。'
+        }
+    }
+
     $httpsConfigPath = Join-Path $stateRoot 'https.json'
     if (Test-Path -LiteralPath $httpsConfigPath) {
         $httpsConfig = [System.IO.File]::ReadAllText($httpsConfigPath, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
@@ -516,7 +536,7 @@ function Start-FormalApi($scope, $secrets) {
         Set-Content -LiteralPath $apiPidPath -Value $process.Id -Encoding ascii
     }
     finally {
-        @('ASPNETCORE_URLS','ASPNETCORE_ENVIRONMENT','ConnectionStrings__FormalDatabase','Authentication__WebBearerToken','Authentication__ReaderBearerToken','Web__BootstrapGrantPath','Operations__StateRoot','Web__TrustedHttpsEnabled','Web__MobileOrigin','Web__PublicCertificatePath','Kestrel__Endpoints__Local__Url','Kestrel__Endpoints__Mobile__Url','Kestrel__Endpoints__Mobile__Certificate__Path','Kestrel__Endpoints__Mobile__Certificate__Password','Web__AllowedAccountExternalId','Web__AllowedConversationExternalId','Reader__AllowedAccountExternalId','Reader__AllowedConversationExternalId','Agent__Runtime','Agent__SkillVersion','Agent__RecentMessageLimit','Agent__IncludeMemory','Agent__Budget__MaxDurationSeconds','Agent__Budget__MaxContextCharacters','Agent__Budget__MaxToolCalls','Agent__AllowedPersonaPresetIds__0','Agent__AllowedPersonaPresetIds__1','Agent__AllowedPersonaPresetIds__2','Agent__AllowedPersonaPresetIds__3','Agent__AllowedReadCapabilities__0','Agent__AllowedReadCapabilities__1','Agent__AllowedReadCapabilities__2','Agent__AllowedReadCapabilities__3') | ForEach-Object { Remove-Item "Env:$_" -ErrorAction SilentlyContinue }
+        @('ASPNETCORE_URLS','ASPNETCORE_ENVIRONMENT','ConnectionStrings__FormalDatabase','Authentication__WebBearerToken','Authentication__ReaderBearerToken','Web__BootstrapGrantPath','Operations__StateRoot','HTTP_PROXY','HTTPS_PROXY','ALL_PROXY','NO_PROXY','Web__TrustedHttpsEnabled','Web__MobileOrigin','Web__PublicCertificatePath','Kestrel__Endpoints__Local__Url','Kestrel__Endpoints__Mobile__Url','Kestrel__Endpoints__Mobile__Certificate__Path','Kestrel__Endpoints__Mobile__Certificate__Password','Web__AllowedAccountExternalId','Web__AllowedConversationExternalId','Reader__AllowedAccountExternalId','Reader__AllowedConversationExternalId','Agent__Runtime','Agent__SkillVersion','Agent__RecentMessageLimit','Agent__IncludeMemory','Agent__Budget__MaxDurationSeconds','Agent__Budget__MaxContextCharacters','Agent__Budget__MaxToolCalls','Agent__AllowedPersonaPresetIds__0','Agent__AllowedPersonaPresetIds__1','Agent__AllowedPersonaPresetIds__2','Agent__AllowedPersonaPresetIds__3','Agent__AllowedReadCapabilities__0','Agent__AllowedReadCapabilities__1','Agent__AllowedReadCapabilities__2','Agent__AllowedReadCapabilities__3') | ForEach-Object { Remove-Item "Env:$_" -ErrorAction SilentlyContinue }
     }
 
     $deadline = [DateTime]::UtcNow.AddSeconds(90)
