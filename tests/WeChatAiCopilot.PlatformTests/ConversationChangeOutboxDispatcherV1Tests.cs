@@ -70,6 +70,53 @@ public sealed class ConversationChangeOutboxDispatcherV1Tests
         Assert.Equal(TimeSpan.FromSeconds(expectedDelaySeconds), store.Retry?.Delay);
     }
 
+    [Theory]
+    [InlineData(MemoryConsolidationEventOutcomeV1.Deferred, "generator_unavailable")]
+    [InlineData(MemoryConsolidationEventOutcomeV1.RebuildRequired, "generator_unavailable_reprocess_queued")]
+    public async Task DispatchNextAsync_WaitsLongerForMissingCapabilityInsteadOfBackoffCycling(
+        MemoryConsolidationEventOutcomeV1 outcome,
+        string detailCode)
+    {
+        var store = new FakeStore { Claim = CreateClaim(attempts: 20) };
+        var handler = new FakeHandler
+        {
+            Result = new MemoryConsolidationEventResultV1(outcome, detailCode)
+        };
+        var dispatcher = CreateDispatcher(store, handler);
+
+        Assert.True(await dispatcher.DispatchNextAsync());
+
+        Assert.Equal(detailCode, store.Retry?.ErrorCode);
+        Assert.Equal(TimeSpan.FromMinutes(30), store.Retry?.Delay);
+    }
+
+    [Fact]
+    public async Task DispatchNextAsync_TransientGeneratorFailureStillUsesShortBackoff()
+    {
+        var store = new FakeStore { Claim = CreateClaim(attempts: 2) };
+        var handler = new FakeHandler
+        {
+            Result = new MemoryConsolidationEventResultV1(
+                MemoryConsolidationEventOutcomeV1.Deferred,
+                "generator_failed")
+        };
+        var dispatcher = CreateDispatcher(store, handler);
+
+        Assert.True(await dispatcher.DispatchNextAsync());
+
+        Assert.Equal(TimeSpan.FromSeconds(2), store.Retry?.Delay);
+    }
+
+    [Fact]
+    public void Options_RejectCapabilityDelayShorterThanBackoffCap()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => new ConversationChangeOutboxDispatcherV1(
+            new FakeStore(),
+            new FakeHandler(),
+            NullLogger<ConversationChangeOutboxDispatcherV1>.Instance,
+            new OutboxDispatcherOptionsV1 { CapabilityRetryDelay = TimeSpan.FromMinutes(1) }));
+    }
+
     [Fact]
     public async Task DispatchNextAsync_UsesStableCodeForExceptionsWithoutPersistingExceptionText()
     {

@@ -35,4 +35,9 @@ public sealed record OutboxDispatcherOptionsV1
     public TimeSpan LeaseDuration { get; init; } = TimeSpan.FromMinutes(2);
     public TimeSpan BaseRetryDelay { get; init; } = TimeSpan.FromSeconds(1);
     public TimeSpan MaximumRetryDelay { get; init; } = TimeSpan.FromMinutes(5);
+
+    // A missing optional capability (for example the memory consolidation runtime being switched off)
+    // will not heal itself in five minutes, so those events wait longer instead of burning a claim,
+    // a handler call and a warning once per backoff cap.
+    public TimeSpan CapabilityRetryDelay { get; init; } = TimeSpan.FromMinutes(30);
 }

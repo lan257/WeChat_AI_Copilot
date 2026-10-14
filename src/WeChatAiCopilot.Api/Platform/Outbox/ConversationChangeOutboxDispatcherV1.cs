@@ -94,11 +94,22 @@ public sealed class ConversationChangeOutboxDispatcherV1
         string errorCode,
         CancellationToken cancellationToken)
     {
-        var delay = OutboxRetryPolicyV1.GetDelay(
-            claim.Attempts,
-            _options.BaseRetryDelay,
-            _options.MaximumRetryDelay);
+        var capabilityGap = WaitingForCapability(errorCode);
+        var delay = capabilityGap
+            ? _options.CapabilityRetryDelay
+            : OutboxRetryPolicyV1.GetDelay(claim.Attempts, _options.BaseRetryDelay, _options.MaximumRetryDelay);
         var scheduled = await _store.ScheduleRetryAsync(claim, errorCode, delay, cancellationToken);
+        if (capabilityGap)
+        {
+            _logger.LogInformation(
+                "Outbox event {EventId} ({EventType}) waits for a capability that is not configured; error code {ErrorCode}; next attempt after {Delay}.",
+                claim.Event.EventId,
+                claim.EventType,
+                errorCode,
+                delay);
+            return;
+        }
+
         _logger.LogWarning(
             "Outbox event {EventId} ({EventType}) retry scheduling result is {ScheduleResult}; error code {ErrorCode}.",
             claim.Event.EventId,
@@ -106,6 +117,10 @@ public sealed class ConversationChangeOutboxDispatcherV1
             scheduled ? "scheduled" : "lease_lost",
             errorCode);
     }
+
+    private static bool WaitingForCapability(string errorCode) =>
+        errorCode.Equals("generator_unavailable", StringComparison.OrdinalIgnoreCase)
+        || errorCode.Equals("generator_unavailable_reprocess_queued", StringComparison.OrdinalIgnoreCase);
 
     private async Task ReleaseLeaseBestEffortAsync(OutboxDeliveryClaimV1 claim)
     {
@@ -168,6 +183,11 @@ public sealed class ConversationChangeOutboxDispatcherV1
         if (options.MaximumRetryDelay < options.BaseRetryDelay)
         {
             throw new ArgumentOutOfRangeException(nameof(options.MaximumRetryDelay));
+        }
+
+        if (options.CapabilityRetryDelay < options.MaximumRetryDelay)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options.CapabilityRetryDelay));
         }
     }
 }
