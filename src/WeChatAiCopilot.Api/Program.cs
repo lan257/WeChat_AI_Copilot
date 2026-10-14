@@ -37,12 +37,16 @@ var app = builder.Build();
 
 app.UseDefaultFiles();
 // Entry pages must never come from cache: a browser that cached the previous root page would keep
-// loading the old UI after an upgrade even though the server already serves the new one.
+// loading the old UI after an upgrade even though the server already serves the new one. The assets
+// are served without fingerprints, so a cached ES module would pin the whole UI to the old version.
 app.UseStaticFiles(new StaticFileOptions
 {
     OnPrepareResponse = context =>
     {
-        if (context.File.Name.EndsWith(".html", StringComparison.OrdinalIgnoreCase))
+        var name = context.File.Name;
+        if (name.EndsWith(".html", StringComparison.OrdinalIgnoreCase)
+            || name.EndsWith(".js", StringComparison.OrdinalIgnoreCase)
+            || name.EndsWith(".css", StringComparison.OrdinalIgnoreCase))
         {
             context.Context.Response.Headers.CacheControl = "no-store";
         }
