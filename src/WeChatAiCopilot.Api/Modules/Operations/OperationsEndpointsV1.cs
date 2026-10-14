@@ -38,7 +38,7 @@ public static class OperationsEndpointsV1
 
     private static async Task<IResult> GetStatusAsync(HttpContext context,NpgsqlDataSource db,IConfiguration config,CancellationToken ct)
     {
-        var accounts=new List<object>();string databaseState="Unavailable";string readerState="Unavailable";object? latestAgentRun=null;
+        var accounts=new List<object>();string databaseState="Unavailable";string readerState="Unavailable";object? latestAgentRun=null;object? agentQueue=null;
         var identity=context.Items[WebSessionServiceV1.IdentityItemKey] as WebSessionIdentityV1;
         try{
             await using var health=db.CreateCommand("SELECT 1;");await health.ExecuteScalarAsync(ct);databaseState="Ready";
@@ -56,9 +56,25 @@ public static class OperationsEndpointsV1
                 cmd.Parameters.AddWithValue("conversations",identity?.AuthorizedConversationIds.ToArray()??[]);
                 await using var r=await cmd.ExecuteReaderAsync(ct);if(await r.ReadAsync(ct))latestAgentRun=new{taskType=r.GetString(0),runtimeName=r.GetString(1),status=r.GetString(2),startedAtUtc=r.GetFieldValue<DateTimeOffset>(3),endedAtUtc=r.IsDBNull(4)?(DateTimeOffset?)null:r.GetFieldValue<DateTimeOffset>(4),errorCode=r.IsDBNull(5)?null:r.GetString(5)};
             }
+            // Queue depth and the oldest wait are what tells a user "your task is not lost, it is
+            // behind two others", instead of leaving them staring at a spinner with no numbers.
+            await using(var cmd=db.CreateCommand("""
+                WITH scoped AS(SELECT account_id,conversation_id,status,created_at FROM copilot.agent_tasks
+                WHERE status IN('Queued','Running') AND (@all OR (account_id=ANY(@accounts) AND conversation_id=ANY(@conversations)))),
+                per_conversation AS(SELECT count(*) depth FROM scoped GROUP BY account_id,conversation_id)
+                SELECT (SELECT count(*) FROM scoped WHERE status='Queued')::int,
+                       (SELECT count(*) FROM scoped WHERE status='Running')::int,
+                       (SELECT COALESCE(EXTRACT(EPOCH FROM now()-min(created_at))::int,0) FROM scoped WHERE status='Queued'),
+                       (SELECT COALESCE(max(depth),0)::int FROM per_conversation);
+                """)){
+                cmd.Parameters.AddWithValue("all",identity?.AllImported??false);cmd.Parameters.AddWithValue("accounts",identity?.AuthorizedAccountIds.ToArray()??[]);
+                cmd.Parameters.AddWithValue("conversations",identity?.AuthorizedConversationIds.ToArray()??[]);
+                await using var r=await cmd.ExecuteReaderAsync(ct);
+                if(await r.ReadAsync(ct))agentQueue=new{queued=r.GetInt32(0),running=r.GetInt32(1),oldestQueuedSeconds=r.GetInt32(2),busiestConversationTasks=r.GetInt32(3)};
+            }
         }catch(NpgsqlException){databaseState="Unavailable";}
         var enabled=SessionEndpointsV1.MobileConfigured(config);
-        return Results.Ok(new{databaseState,readerState,readerAccounts=accounts,latestAgentRun,
+        return Results.Ok(new{databaseState,readerState,readerAccounts=accounts,latestAgentRun,agentQueue,
             configuredRuntime=config["Agent:Runtime"]??"Disabled",quickModelConfigured=!string.IsNullOrWhiteSpace(config["Agent:ExecutionProfiles:Quick:ModelId"]),
             memoryConsolidationRuntime=config["Memory:ConsolidationRuntime"]??"Disabled",historyJobsState="Available",
             historyImport=ReadHistoryImportState(config),

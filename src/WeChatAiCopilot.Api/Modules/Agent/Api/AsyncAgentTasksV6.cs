@@ -90,9 +90,13 @@ public sealed class AgentTaskQueueV6(NpgsqlDataSource db,IServiceScopeFactory sc
     internal async Task<bool> ExecuteNextAsync(CancellationToken stopping)
     {
         QueuedAgentTaskV6? item;
+        // Fairness first, then age: with only two workers, a burst of tasks for one contact must not
+        // make every other contact wait behind it. Oldest-wins still holds inside one conversation.
         await using(var q=db.CreateCommand("""
             UPDATE copilot.agent_tasks SET status='Running',phase='Preparing',started_at=now()
-            WHERE task_id=(SELECT task_id FROM copilot.agent_tasks WHERE status='Queued' ORDER BY created_at,task_id FOR UPDATE SKIP LOCKED LIMIT 1)
+            WHERE task_id=(SELECT t.task_id FROM copilot.agent_tasks t WHERE t.status='Queued'
+            ORDER BY (SELECT count(*) FROM copilot.agent_tasks p WHERE p.account_id=t.account_id AND p.conversation_id=t.conversation_id AND p.status IN('Queued','Running')),t.created_at,t.task_id
+            FOR UPDATE SKIP LOCKED LIMIT 1)
             RETURNING task_id,account_id,conversation_id,status,phase,payload::text,fingerprint,result_id,error_code,created_at,started_at,ended_at,timings::text;
             """)){await using var r=await q.ExecuteReaderAsync(stopping);item=await r.ReadAsync(stopping)?ReadRow(r):null;}
         if(item is null)return false;

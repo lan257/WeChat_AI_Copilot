@@ -108,6 +108,30 @@ public sealed class V6AgentTasksPostgresTests
     }
 
     [V6SkillsPostgresFact]
+    public async Task ExecuteNextClaimsWithAFairerConversationAheadOfAnOlderBusyOne()
+    {
+        await using var fixture=await Fixture.CreateAsync();
+        var a1=await fixture.Queue.EnqueueAsync(fixture.A,Reply,null,default);
+        var a2=await fixture.Queue.EnqueueAsync(fixture.A,Reply,null,default);
+        var b1=await fixture.Queue.EnqueueAsync(fixture.B,Reply,null,default);
+        Assert.NotEqual(a1,b1);
+
+        // Plain FIFO would run A twice before B moves at all. Ordering by how many tasks the
+        // conversation already has lets the contact with one waiting task go first, and nothing is
+        // lost: the busy conversation still gets both of its tasks.
+        Assert.True(await fixture.ExecuteOne());
+        Assert.Equal(fixture.B.ConversationId,fixture.Runtime.LastRequest!.Task!.ConversationId);
+        Assert.True(await fixture.ExecuteOne());
+        Assert.Equal(fixture.A.ConversationId,fixture.Runtime.LastRequest!.Task!.ConversationId);
+        Assert.True(await fixture.ExecuteOne());
+        Assert.Equal(fixture.A.ConversationId,fixture.Runtime.LastRequest!.Task!.ConversationId);
+        Assert.Equal(3,fixture.Runtime.CallCount);
+        Assert.Equal("Completed",(await fixture.Response(a1)).Status);
+        Assert.Equal("Completed",(await fixture.Response(a2)).Status);
+        Assert.Equal("Completed",(await fixture.Response(b1,fixture.B)).Status);
+    }
+
+    [V6SkillsPostgresFact]
     public async Task PostAcceptsImmediatelyResultRemainsBoundToScopeAndIdempotencyChecksBody()
     {
         await using var fixture = await Fixture.CreateAsync();
