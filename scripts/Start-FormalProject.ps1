@@ -474,7 +474,7 @@ function Start-FormalApi($scope, $secrets) {
     $requiresBuild = -not (Test-Path -LiteralPath $apiDll)
     if (-not $requiresBuild) {
         $builtAt = (Get-Item -LiteralPath $apiDll).LastWriteTimeUtc
-        $changedSource = Get-ChildItem -LiteralPath $apiProject -Recurse -File | Where-Object { $_.FullName -notmatch '[\\/](bin|obj)[\\/]' -and $_.Extension -in @('.cs','.csproj','.json') -and $_.LastWriteTimeUtc -gt $builtAt } | Select-Object -First 1
+        $changedSource = Get-ChildItem -LiteralPath $apiProject -Recurse -File | Where-Object { $_.FullName -notmatch '[\\/](bin|obj)[\\/]' -and $_.Extension -in @('.cs','.csproj','.json','.html','.css','.js') -and $_.LastWriteTimeUtc -gt $builtAt } | Select-Object -First 1
         $changedMigration = Get-ChildItem -LiteralPath (Join-Path $productRoot 'db\migrations') -File | Where-Object { $_.LastWriteTimeUtc -gt $builtAt } | Select-Object -First 1
         $requiresBuild = $null -ne $changedSource -or $null -ne $changedMigration
     }

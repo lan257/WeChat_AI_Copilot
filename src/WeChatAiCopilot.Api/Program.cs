@@ -1,4 +1,5 @@
 using Npgsql;
+using Microsoft.AspNetCore.StaticFiles;
 using WeChatAiCopilot.Api.Modules.Agent.Api;
 using WeChatAiCopilot.Api.Modules.Conversations.Api;
 using WeChatAiCopilot.Api.Modules.Conversations.Application;
@@ -35,7 +36,18 @@ if (!string.IsNullOrWhiteSpace(formalConnectionString))
 var app = builder.Build();
 
 app.UseDefaultFiles();
-app.UseStaticFiles();
+// Entry pages must never come from cache: a browser that cached the previous root page would keep
+// loading the old UI after an upgrade even though the server already serves the new one.
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = context =>
+    {
+        if (context.File.Name.EndsWith(".html", StringComparison.OrdinalIgnoreCase))
+        {
+            context.Context.Response.Headers.CacheControl = "no-store";
+        }
+    }
+});
 
 if (formalDataSource is not null)
 {
