@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="light" />
+<title>知间 · 微信 AI 沟通助手</title>
+<link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+<div id="app">
+<header class="topbar">
+ <div class="brand"><span class="brandmark">知</span><div class="brandname">知间 <span class="brandtag">让每一次沟通都更从容</span></div></div>
+ <div class="topright">
+  <div class="demo-pill"><span class="demo-dot"></span> 正在连接本机应用…</div>
+  <button class="top-chip hide-med" data-action="refresh" title="读取真实消息并检查建议版本"><span data-icon="zap"></span><span class="label">刷新消息</span></button>
+  <button class="top-chip hide-mobile" data-action="drawer" data-tab="setup"><span data-icon="settings"></span><span class="label">连接设置</span></button><button class="top-chip hide-mobile" data-action="drawer" data-tab="overview"><span data-icon="sliders"></span><span class="label">管理</span></button>
+  <button class="top-chip" data-action="focus"><span data-icon="minimize"></span><span class="label">极简模式</span></button>
+  <button class="iconbtn mobile-contacts" data-action="mobile-contacts" aria-label="联系人"><span data-icon="users"></span></button>
+ </div>
+</header>
+<div class="app-body">
+ <aside class="sidebar" id="sidebar">
+  <div class="side-top">
+   <div class="subhead">当前微信账号</div>
+   <div class="account-select-wrap"><span class="account-logo">微</span><div class="accopy"><strong id="accountName">当前微信账号</strong><small id="accountSub">等待安全会话</small></div><span class="account-chev" data-icon="chevron-down"></span><select id="accountSelect" aria-label="切换微信账号"></select></div>
+   <div class="side-search"><span data-icon="search"></span><input id="contactSearch" aria-label="搜索联系人" placeholder="搜索联系人或会话" autocomplete="off" /></div>
+  </div>
+  <div class="list-controls"><strong>消息</strong><div class="filter-group"><button data-action="filter" data-filter="all" class="active">全部</button><button data-action="filter" data-filter="listening">监听中</button></div></div>
+  <div class="conv-list" id="conversationList"></div>
+  <div class="side-bottom"><div class="listen-summary"><span><span class="live-light"></span><span id="listenCount">正在读取监听状态</span></span><button class="textbtn" data-action="drawer" data-tab="listening">管理</button></div><div class="side-actions"><button class="secondary" data-action="drawer" data-tab="portrait"><span data-icon="users"></span>人物画像</button><button class="secondary" data-action="drawer" data-tab="overview"><span data-icon="settings"></span>设置</button></div></div>
+ </aside>
+ <main class="chat-section">
+  <div class="chat-header">
+   <button class="iconbtn mobile-contacts" data-action="mobile-contacts" aria-label="打开联系人列表"><span data-icon="menu"></span></button>
+   <button class="avatar" id="chatAvatar" data-action="drawer" data-tab="portrait" aria-label="打开联系人画像">微</button><div class="chat-title-group"><div class="chat-title"><strong id="chatTitle">请选择联系人</strong><span class="status-mini off" id="chatStatus">未监听</span></div><div class="chat-subtitle" id="chatSubtitle">每条建议只针对当前联系人</div></div>
+   <div class="chat-actions"><button class="secondary portrait-shortcut hide-mobile" data-action="drawer" data-tab="portrait" title="打开该联系人的人物画像"><span data-icon="users"></span>人物画像</button><button class="iconbtn mobile-ai-open" data-action="ai-open" title="打开 AI 咨询"><span data-icon="sparkles"></span></button><div class="chat-divider"></div><button class="iconbtn" data-action="drawer" data-tab="conversation" title="当前会话详情与操作"><span data-icon="more-horizontal"></span></button></div>
+  </div>
+  <div id="identityBanner" class="identity-banner hidden"><span>该会话的本人/对方方向仍待确认，请先校准后再依据长期记忆作判断。</span><button data-action="drawer" data-tab="identity">去校准 →</button></div>
+  <div class="chat-timeline" id="chatTimeline"></div>
+  <section class="suggest-dock" aria-label="AI 回复建议">
+    <div class="suggest-bar"><div class="section-mini-title"><span class="spark" data-icon="sparkles"></span><span>回复建议</span><span id="suggestStatus" class="gen-status">等待生成</span></div><div class="suggest-settings"><select id="personaSelect" class="pill-select" aria-label="回复人设"></select><button type="button" class="skill-shortcut" data-action="skill-new" data-kind="persona" title="创建自己的回复人设">自定义</button><select id="thinkingSelect" class="pill-select" aria-label="思考强度"><option value="Quick">快速</option><option value="Balanced">平衡</option><option value="Deep">深度</option><option value="Max">Max · 复核</option></select><button id="generateButton" class="small-primary" data-action="generate"><span id="generateLabel">生成三条</span></button></div></div>
+    <div class="suggest-info"><span id="suggestInfo">根据当前聊天与已授权记忆生成 · 不自动发送</span><button id="cancelGen" class="small-plain hidden" data-action="cancel-generate">取消任务</button></div>
+    <div id="suggestions" class="suggest-list"><div class="suggest-placeholder">先选择一种人设，然后生成三条可复制的回复建议。</div></div>
+    <div id="suggestProgress" class="suggest-progress hidden"><span class="spinner"></span><span id="progressText">正在准备上下文…</span></div>
+  </section>
+ </main>
+ <aside class="ai-panel" id="aiPanel">
+  <div class="ai-top"><span class="ai-icon" data-icon="sparkles"></span><div class="ai-title"><strong>AI 自由咨询</strong><small>有疑问，和我深入聊聊</small></div><button class="iconbtn mobile-ai-open" data-action="ai-close" aria-label="关闭 AI 咨询"><span data-icon="x"></span></button></div>
+  <div class="ai-linked"><span>当前讨论对象：<strong id="aiContact">请选择联系人</strong></span><button class="textbtn" data-action="drawer" data-tab="portrait">查看人物画像 <span data-icon="arrow-right"></span></button></div>
+  <div class="ai-scroll" id="aiScroll"></div>
+  <div class="ai-composer"><textarea id="aiInput" placeholder="比如：怎么回应这次邀约比较自然？" aria-label="向 AI 自由提问"></textarea><div class="composer-footer"><div class="composer-meta"><span>分析深度</span><select id="consultThinking" aria-label="自由咨询思考强度"><option value="Quick">快速</option><option value="Balanced" selected>平衡</option><option value="Deep">深度</option><option value="Max">Max</option></select></div><button id="aiSend" class="sendbtn" data-action="ask" title="发送咨询问题"><span data-icon="send"></span></button></div></div>
+ </aside>
+</div>
+<div id="aiOverlay" class="ai-overlay hidden" data-action="ai-close"></div>
+<div id="sideOverlay" class="mobile-side-scrim hidden" data-action="mobile-contacts"></div>
+<!-- Focus mode intentionally has exactly 3 candidates + two controls + expand. -->
+<section class="focus-view" id="focusView"><div class="focus-card">
+ <div class="focus-top"><button class="focus-expand" data-action="focus-expand"><span data-icon="maximize"></span> 展开</button><span class="focus-caption" id="focusName">请选择联系人 · 只读助手</span></div>
+ <div class="focus-cards" id="focusChoices"></div>
+ <div id="focusStatus" class="focus-status hidden"></div>
+ <div class="focus-controls"><button id="focusPersona" class="focus-control" data-action="focus-persona"><span data-icon="smile"></span><span id="focusPersonaName">人设 · 自然</span></button><button class="focus-control" data-action="generate"><span data-icon="refresh"></span>换一批</button></div>
+ <div id="focusDetails" class="focus-details hidden"><p id="focusExplanation">与工作区使用同一会话、建议与人设状态。切换联系人不会影响后台监听。</p><button class="secondary" data-action="workspace">返回完整工作区</button><button class="secondary" data-action="focus-choose">切换联系人</button></div>
+</div></section>
+<div id="scrim" class="scrim hidden" data-action="close-drawer"></div>
+<section class="drawer hidden" id="drawer" role="dialog" aria-modal="true" aria-label="应用管理与联系人详情">
+ <header class="drawer-head"><div class="headgroup"><span class="spark" data-icon="sliders"></span><div><h2>管理与详情</h2><small>功能跟随当前账号与联系人</small></div></div><button class="iconbtn" data-action="close-drawer" aria-label="关闭"><span data-icon="x"></span></button></header>
+ <div class="drawer-body"><nav class="drawer-tabs" id="drawerTabs"><button class="drawer-tab active" data-action="tab" data-tab="overview"><span data-icon="home"></span>总览</button><button class="drawer-tab" data-action="tab" data-tab="listening"><span data-icon="radio"></span>监听管理</button><button class="drawer-tab" data-action="tab" data-tab="conversation"><span data-icon="message"></span>会话详情</button><button class="drawer-tab" data-action="tab" data-tab="portrait"><span data-icon="users"></span>人物画像</button><button class="drawer-tab" data-action="tab" data-tab="self"><span data-icon="smile"></span>我的表达</button><button class="drawer-tab" data-action="tab" data-tab="memories"><span data-icon="book"></span>记忆与证据</button><button class="drawer-tab" data-action="tab" data-tab="identity"><span data-icon="users"></span>身份校准</button><button class="drawer-tab" data-action="tab" data-tab="history"><span data-icon="history"></span>历史补录</button><button class="drawer-tab" data-action="tab" data-tab="agent"><span data-icon="sparkles"></span>人设与 Skills</button><button class="drawer-tab" data-action="tab" data-tab="setup"><span data-icon="settings"></span>连接与配置</button><button class="drawer-tab" data-action="tab" data-tab="preferences"><span data-icon="sliders"></span>使用偏好</button><button class="drawer-tab" data-action="tab" data-tab="health"><span data-icon="radio"></span>运行状态</button></nav><div id="drawerContent" class="drawer-main"></div></div>
+ <footer class="drawer-footer">知间 · 本地优先 · 微信只读 · 建议由你复制后手动发送</footer>
+</section>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+</div>
+<script type="module" src="/v6/main.js"></script>
+</body></html>

@@ -29,14 +29,28 @@ $script:databaseStartedByLauncher = $false
 $script:readerStartedByLauncher = $false
 
 function Open-AuthenticatedWorkspace {
-    $grant = New-RandomHex
-    $sha = [System.Security.Cryptography.SHA256]::Create()
-    try { $grantHash = [BitConverter]::ToString($sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($grant))).Replace('-', '').ToLowerInvariant() }
-    finally { $sha.Dispose() }
-    $bootstrap = [ordered]@{ tokenHash = $grantHash; expiresAtUtc = [DateTime]::UtcNow.AddMinutes(2).ToString('o') }
     $bootstrapPath = Join-Path $stateRoot 'web-bootstrap.json'
-    [System.IO.File]::WriteAllText($bootstrapPath, ($bootstrap | ConvertTo-Json -Compress), [System.Text.UTF8Encoding]::new($false))
-    Start-Process ($baseUrl + '/#bootstrap=' + $grant)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        for ($attempt = 1; $attempt -le 2; $attempt++) {
+            $grant = New-RandomHex
+            $grantHash = [BitConverter]::ToString($sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($grant))).Replace('-', '').ToLowerInvariant()
+            # A browser that is cold starting can take longer than a couple of minutes to run the page,
+            # so the one-shot grant stays valid long enough for that first load.
+            $bootstrap = [ordered]@{ tokenHash = $grantHash; expiresAtUtc = [DateTime]::UtcNow.AddMinutes(10).ToString('o') }
+            [System.IO.File]::WriteAllText($bootstrapPath, ($bootstrap | ConvertTo-Json -Compress), [System.Text.UTF8Encoding]::new($false))
+            Start-Process ($baseUrl + '/#bootstrap=' + $grant)
+            # The API deletes the grant file once the browser redeems it.
+            $waitSeconds = if ($attempt -eq 1) { 60 } else { 30 }
+            $deadline = [DateTime]::UtcNow.AddSeconds($waitSeconds)
+            while ([DateTime]::UtcNow -lt $deadline) {
+                if (-not (Test-Path -LiteralPath $bootstrapPath -PathType Leaf)) { return }
+                Start-Sleep -Milliseconds 1000
+            }
+            if ($attempt -eq 1) { Write-Host '本机安全会话尚未在浏览器中完成，正在重新打开一次。' }
+        }
+    } finally { $sha.Dispose() }
+    Write-Host '本机安全会话未能自动完成：请切到刚打开的网页标签并按一次刷新即可，无需重启程序。'
 }
 
 function Start-ManagedReader([string] $pythonExe) {
