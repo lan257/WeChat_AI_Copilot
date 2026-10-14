@@ -312,6 +312,62 @@ class ReaderContractTests(unittest.TestCase):
             self.assertTrue(payload["isLastBatch"])
             self.assertEqual(job["jobId"], payload["jobId"])
 
+    def test_history_queue_reads_every_local_message_and_resumes_from_server_cursors(self) -> None:
+        job = {"jobId": "a21b2460-9228-4e03-b714-fd54098575dc", "accountExternalId": self.settings["accountExternalId"],
+               "conversationExternalId": "test-authorized-contact", "fromUtc": None, "toUtc": None,
+               "maximumRows": reader.MAX_FULL_HISTORY_ROWS, "fullLocalHistory": True,
+               "resumeCursors": [{"messageTable": "Msg_0000000000000000001", "lastLocalId": 42},
+                                 {"messageTable": "bad", "lastLocalId": -1}]}
+        seen: dict[str, object] = {}
+
+        def scan(database, settings, from_utc, to_utc, max_rows, resume):
+            seen.update({"from_utc": from_utc, "to_utc": to_utc, "max_rows": max_rows, "resume": resume})
+            return []
+
+        with tempfile.TemporaryDirectory() as workdir, \
+                mock.patch.object(reader, "_get_history_control", side_effect=[job, {"status": "Running"}]), \
+                mock.patch.object(reader, "_get_server_targets", return_value={"conversationExternalIds": [job["conversationExternalId"]]}), \
+                mock.patch.object(reader, "_open_database", return_value=(object(), Path(workdir))), \
+                mock.patch.object(reader, "_read_history", side_effect=scan), \
+                mock.patch.object(reader, "_post_contract") as post:
+            reader._run_queued_history(self.settings, object(), threading.Event())
+        self.assertIsNone(seen["from_utc"])
+        self.assertIsNone(seen["to_utc"])
+        self.assertEqual(reader.MAX_FULL_HISTORY_ROWS, seen["max_rows"])
+        # Only well formed cursors carry over; a negative offset must not skip unread rows.
+        self.assertEqual({"Msg_0000000000000000001": 42}, seen["resume"])
+        self.assertEqual({"fromUtc": None, "toUtc": None}, post.call_args.args[3]["requestedRange"])
+
+    def test_history_queue_rejects_half_open_window(self) -> None:
+        job = self.history_job()
+        job["toUtc"] = None
+        with mock.patch.object(reader, "_get_history_control", return_value=job), \
+                mock.patch.object(reader, "_get_server_targets", return_value={"conversationExternalIds": [job["conversationExternalId"]]}), \
+                mock.patch.object(reader, "_open_database") as opened, \
+                mock.patch.object(reader, "_post_contract") as post:
+            reader._run_queued_history(self.settings, object(), threading.Event())
+        opened.assert_not_called()
+        self.assertEqual("INVALID_HISTORY_RANGE", post.call_args.args[3]["errorCode"])
+
+    def test_history_queue_keeps_the_ninety_day_limit_for_bounded_windows(self) -> None:
+        job = self.history_job()
+        job["fromUtc"] = "2024-01-01T00:00:00Z"
+        with mock.patch.object(reader, "_get_history_control", return_value=job), \
+                mock.patch.object(reader, "_get_server_targets", return_value={"conversationExternalIds": [job["conversationExternalId"]]}), \
+                mock.patch.object(reader, "_open_database") as opened, \
+                mock.patch.object(reader, "_post_contract") as post:
+            reader._run_queued_history(self.settings, object(), threading.Event())
+        opened.assert_not_called()
+        self.assertEqual("INVALID_HISTORY_RANGE", post.call_args.args[3]["errorCode"])
+
+    def test_resume_cursors_ignore_malformed_entries(self) -> None:
+        self.assertEqual({}, reader._resume_cursors(None))
+        self.assertEqual({}, reader._resume_cursors("nope"))
+        self.assertEqual({"Msg_2": 7}, reader._resume_cursors(
+            [{"messageTable": "Msg_2", "lastLocalId": 7}, {"messageTable": "", "lastLocalId": 3},
+             {"messageTable": "Msg_3", "lastLocalId": "x"}, {"messageTable": "Msg_4", "lastLocalId": True},
+             {"messageTable": "Msg_5"}]))
+
     def test_history_queue_revoked_target_prevents_local_read(self) -> None:
         with mock.patch.object(reader, "_get_history_control", return_value=self.history_job()), \
                 mock.patch.object(reader, "_get_server_targets", return_value={"conversationExternalIds": []}), \

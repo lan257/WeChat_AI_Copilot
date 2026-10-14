@@ -108,6 +108,69 @@ public sealed class V6HistoryJobTests
     }
 
     [V6SessionsPostgresFact]
+    public async Task FullLocalHistoryJobPersistsItsScanCursorAndTheNextAttemptResumesFromIt()
+    {
+        await using var db=TestDatabase();await MigrationRunner.ApplyPendingAsync(db);
+        var scope=await CreateScope(db);var token=await Session(db,scope);
+        var app=Application(db,scope.AccountExternalId);
+        await using var disposableApp=app;
+        var create=new HistoryJobEndpointsV1.CreateHistoryJobV1(scope.AccountId,scope.ConversationId,null,null,5000,true);
+
+        // Half a window is never valid and a bounded window keeps its original 90 day limit.
+        var tooWide=new HistoryJobEndpointsV1.CreateHistoryJobV1(scope.AccountId,scope.ConversationId,
+            DateTimeOffset.UtcNow.AddDays(-120),DateTimeOffset.UtcNow,5000,false);
+        Assert.Equal(400,(await Invoke(app,"POST","/api/history/jobs",tooWide,token)).Status);
+
+        var pending=await Invoke(app,"POST","/api/history/jobs",create,token);
+        Assert.Equal(202,pending.Status);
+        var created=JsonDocument.Parse(pending.Body).RootElement;
+        var id=created.GetProperty("jobId").GetString()!;
+        Assert.True(created.GetProperty("fullLocalHistory").GetBoolean());
+        Assert.Equal(200000,created.GetProperty("maximumRows").GetInt32());
+        Assert.Equal(JsonValueKind.Null,created.GetProperty("rangeFromUtc").ValueKind);
+
+        var claimed=JsonDocument.Parse((await Invoke(app,"GET","/api/reader/history-jobs/next",null,null)).Body).RootElement;
+        Assert.Equal(id,claimed.GetProperty("jobId").GetString());
+        Assert.True(claimed.GetProperty("fullLocalHistory").GetBoolean());
+        Assert.Equal(JsonValueKind.Null,claimed.GetProperty("fromUtc").ValueKind);
+        Assert.Equal(0,claimed.GetProperty("resumeCursors").GetArrayLength());
+
+        // A windowless batch is accepted only when it echoes the persisted empty range back.
+        var batch=new HistoryBatchV1{JobId=id,AccountExternalId=scope.AccountExternalId,
+            ConversationExternalId=scope.ConversationExternalId,RequestedRange=new RequestedRangeV1(),
+            IsLastBatch=true,Items=[new(){Provider="local-wechat",SourceKind=SourceKindV1.HistoryBackfill,
+                AccountExternalId=scope.AccountExternalId,ConversationExternalId=scope.ConversationExternalId,
+                ConversationType="Direct",MessageType="Text",Text="synthetic full import fixture",RawSenderId="1",
+                IdentityNamespace="synthetic-history",SourceOccurredAt=DateTimeOffset.UtcNow,SourceIdentity=new(){
+                    LocalId="41",SortSeq="1",ServerId="0",ShardFingerprint="synthetic-shard",
+                    MessageTable="Msg_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}]};
+        Assert.Equal(200,(await Invoke(app,"POST","/api/reader/history-jobs/{id:guid}/batches",batch,null,id)).Status);
+
+        await using(var cursor=db.CreateCommand("SELECT last_local_id,scanned_rows,last_job_id FROM copilot.history_scan_checkpoints WHERE conversation_id=@c AND window_key='full' AND message_table='Msg_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';"))
+        {
+            cursor.Parameters.AddWithValue("c",scope.ConversationId);
+            await using var reader=await cursor.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            Assert.Equal(41,reader.GetInt64(0));
+            Assert.Equal(1,reader.GetInt32(1));
+            Assert.Equal(id,reader.GetString(2));
+        }
+
+        var saved=await Invoke(app,"GET","/api/history/jobs/{id:guid}",null,token,id);
+        Assert.Equal(1,JsonDocument.Parse(saved.Body).RootElement.GetProperty("resumedScannedRows").GetInt64());
+
+        // A new attempt for the same window is handed the cursor instead of rescanning from zero.
+        var second=await Invoke(app,"POST","/api/history/jobs",create,token);
+        var secondId=JsonDocument.Parse(second.Body).RootElement.GetProperty("jobId").GetString()!;
+        var resumed=JsonDocument.Parse((await Invoke(app,"GET","/api/reader/history-jobs/next",null,null)).Body).RootElement;
+        Assert.Equal(secondId,resumed.GetProperty("jobId").GetString());
+        var cursors=resumed.GetProperty("resumeCursors").EnumerateArray().ToArray();
+        Assert.Single(cursors);
+        Assert.Equal("Msg_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",cursors[0].GetProperty("messageTable").GetString());
+        Assert.Equal(41,cursors[0].GetProperty("lastLocalId").GetInt64());
+    }
+
+    [V6SessionsPostgresFact]
     public async Task LocalBootstrapConsumesOneGrantAndRejectsWrongOriginsAndReplay()
     {
         await using var db=TestDatabase();await MigrationRunner.ApplyPendingAsync(db);

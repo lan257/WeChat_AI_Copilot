@@ -126,8 +126,9 @@ function history() {
   return intro(`${name()} · 历史消息补录`,'主动补录当前联系人在本机已有的旧消息。实时监听和历史补录共享消息库，按来源身份幂等合并。')+
   `<div class="notice warn">当前账号 · 当前一对一会话 · 文本记录。本次完成只代表所选范围扫描完成，历史覆盖状态仍为 Unknown。</div><div class="group-heading">补录范围</div>`+
   card('最近 90 天','最大 5,000 条 · 按时间分批 · 保留来源冲突证据')+
-  `<div style="display:flex;gap:9px">${button('backfill',busy?'正在同步…':'同步历史消息',busy?'disabled':'','primary')}${button('cancel-backfill','取消任务',busy?'':'disabled')}</div><div style="margin-top:21px" id="backfillStats">`+
-  (j?`<div class="group-heading">本次任务 · ${escape(statusLabel(j.status))}</div><div class="stat-grid"><div class="stat-item"><strong>${j.read||0}</strong><span>已扫描</span></div><div class="stat-item"><strong>${j.matched||0}</strong><span>已匹配</span></div><div class="stat-item"><strong>${j.created||0}</strong><span>新补录</span></div><div class="stat-item"><strong>${j.ignoredUnsupported||0}</strong><span>已忽略非文本</span></div></div><p class="intro" style="margin-top:13px">${j.needsReview||0} 条需核对 · ${j.failed||0} 条失败 · 开始于 ${escape(time(j.startedAtUtc))} · 历史覆盖：${escape(statusLabel(j.coverage||'Unknown'))}${j.errorCode?` · ${escape(j.errorCode)}`:''}</p>`:placeholder('尚未开始本次历史补录。点击“同步历史消息”查看真实任务状态和对账结果。'))+'</div>';
+  card('本机全部历史','不限时间窗口 · 单次最多 200,000 条 · 中断后从已入库位置续扫')+
+  `<div style="display:flex;gap:9px">${button('backfill',busy?'正在同步…':'同步历史消息',busy?'disabled':'','primary')}${button('backfill-full',busy?'正在同步…':'导入本机全部历史',busy?'disabled':'')}${button('cancel-backfill','取消任务',busy?'':'disabled')}</div><div style="margin-top:21px" id="backfillStats">`+
+  (j?`<div class="group-heading">本次任务 · ${escape(statusLabel(j.status))}</div><div class="stat-grid"><div class="stat-item"><strong>${j.read||0}</strong><span>已扫描</span></div><div class="stat-item"><strong>${j.matched||0}</strong><span>已匹配</span></div><div class="stat-item"><strong>${j.created||0}</strong><span>新补录</span></div><div class="stat-item"><strong>${j.ignoredUnsupported||0}</strong><span>已忽略非文本</span></div></div><p class="intro" style="margin-top:13px">${j.needsReview||0} 条需核对 · ${j.failed||0} 条失败 · 开始于 ${escape(time(j.startedAtUtc))} · 范围：${j.fullLocalHistory?'本机全部历史':'最近 90 天'} · 历史覆盖：${escape(statusLabel(j.coverage||'Unknown'))}${j.errorCode?` · ${escape(j.errorCode)}`:''}</p>${j.resumedScannedRows>j.read?`<div class="notice">续扫：本机该范围累计已扫描 ${j.resumedScannedRows} 条，含此前中断的扫描。</div>`:''}`:placeholder('尚未开始本次历史补录。点击“同步历史消息”查看真实任务状态和对账结果。'))+'</div>';
 }
 function setup() {
   const n=store.setupStep,item=steps[n],check=store.diagnostics.get(n);
@@ -234,7 +235,7 @@ export async function drawerAction(el) {
     }
     if(action==='setup-check'){store.diagnostics.set(store.setupStep,{state:'Checking',checks:[]});renderDrawer();store.diagnostics.set(store.setupStep,await request('/api/operations/diagnostics',{method:'POST',scoped:false,body:{step:store.setupStep}}));}
     if(action==='toggle-pref'){const value={...store.preferences,[el.dataset.key]:!store.preferences[el.dataset.key]};store.preferences=await request('/api/preferences',{method:'PUT',scoped:false,body:value});notify('偏好已保存。');}
-    if(action==='backfill'){s.historyJob=await request('/api/history/jobs',{method:'POST',target:s,body:{accountId:s.accountId,conversationId:s.conversationId,maximumRows:5000}});changed();void pollHistory(s).catch(error=>notify(errorText(error)));}
+    if(action==='backfill'||action==='backfill-full'){s.historyJob=await request('/api/history/jobs',{method:'POST',target:s,body:action==='backfill-full'?{accountId:s.accountId,conversationId:s.conversationId,fullLocalHistory:true}:{accountId:s.accountId,conversationId:s.conversationId,maximumRows:5000}});changed();void pollHistory(s).catch(error=>notify(errorText(error)));}
     if(action==='cancel-backfill'&&s.historyJob)s.historyJob=await request(`/api/history/jobs/${encodeURIComponent(s.historyJob.jobId)}`,{method:'DELETE',target:s});
     if(action==='discover'){
       const id=store.selectedAccount;let job=await request(`/api/accounts/${encodeURIComponent(id)}/discovery-jobs`,{method:'POST',body:{},scoped:false});notify('目录发现任务已受理，等待只读 Reader。');
