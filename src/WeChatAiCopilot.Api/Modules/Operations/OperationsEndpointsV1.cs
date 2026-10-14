@@ -61,7 +61,34 @@ public static class OperationsEndpointsV1
         return Results.Ok(new{databaseState,readerState,readerAccounts=accounts,latestAgentRun,
             configuredRuntime=config["Agent:Runtime"]??"Disabled",quickModelConfigured=!string.IsNullOrWhiteSpace(config["Agent:ExecutionProfiles:Quick:ModelId"]),
             memoryConsolidationRuntime=config["Memory:ConsolidationRuntime"]??"Disabled",historyJobsState="Available",
+            historyImport=ReadHistoryImportState(config),
             mobileAccess=new{state=enabled?"Configured":"NotEnabled",url=enabled?config["Web:MobileOrigin"]:null,message=enabled?"请先信任本机证书，再使用五分钟配对链接；设备会话一小时后到期。":"手机安全访问尚未启用，需要配置可信 HTTPS 证书；电脑本机地址不能用于手机访问。"}});
+    }
+
+    /// <summary>
+    /// The launcher no longer aborts when the one-off history import fails, so the reason has to
+    /// reach the UI; otherwise the only symptom is "why are there so few messages".
+    /// </summary>
+    private static object ReadHistoryImportState(IConfiguration config)
+    {
+        var root=config["Operations:StateRoot"]??Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"WeChatAiCopilot","Formal");
+        try
+        {
+            var warning=Path.Combine(root,"initial-history-warning.json");
+            if(File.Exists(warning))
+            {
+                using var document=JsonDocument.Parse(File.ReadAllText(warning));
+                var rootObject=document.RootElement;
+                return new{state="Failed",
+                    code=rootObject.TryGetProperty("code",out var code)? code.GetString(): "HISTORY_IMPORT_FAILED",
+                    message=rootObject.TryGetProperty("message",out var message)? message.GetString(): "历史消息导入未完成。",
+                    atUtc=rootObject.TryGetProperty("atUtc",out var at)? at.GetString(): null};
+            }
+            if(Directory.Exists(root) && Directory.GetFiles(root,"initial-history-imported-*.json").Length>0) return new{state="Completed",code=(string?)null,message="本机历史导入已完成。",atUtc=(string?)null};
+            return new{state="NotRecorded",code=(string?)null,message="尚未记录首次历史导入结果。",atUtc=(string?)null};
+        }
+        catch(IOException){return new{state="Unknown",code=(string?)null,message="无法读取历史导入状态。",atUtc=(string?)null};}
+        catch(JsonException){return new{state="Unknown",code=(string?)null,message="历史导入状态无法解析。",atUtc=(string?)null};}
     }
 
     private static async Task<IResult> DiagnoseAsync(DiagnosticRequestV1 request,HttpContext context,NpgsqlDataSource db,IConfiguration config,IServiceProvider services,CancellationToken ct)
