@@ -792,7 +792,7 @@ try {
     $pythonExe = Resolve-ReaderPython311
     $readerRuntime = Join-Path $readerRoot '.runtime\package\wechatauto\db.py'
     if (-not (Test-Path -LiteralPath $readerRuntime)) {
-        throw 'The verified Reader runtime has not been prepared. Contact support before continuing.'
+        throw '本机还没有准备好只读采集组件。请先运行 scripts\Setup-TrialMachine.ps1（或 scripts\..\src\WeChatAiCopilot.Reader\prepare-reader.ps1）准备后再启动。'
     }
 
     Set-StartupStage '正在确认本机授权会话…'
@@ -830,14 +830,6 @@ try {
     Write-Host '本机数据库已就绪。正在构建并启动正式工作区…'
     Write-ReaderSettings $scope $secrets
     Start-FormalApi $scope $secrets
-    if ($SkipInitialHistory) {
-        Write-Host '已按 -SkipInitialHistory 跳过首次历史导入；实时采集照常运行。'
-    }
-    else {
-        try { Import-InitialHistory $scope $secrets $pythonExe }
-        catch { Write-InitialHistoryWarning 'IMPORT_SKIPPED' '首次历史导入出现意外错误，已跳过并继续打开工作区。' }
-    }
-
     Start-ManagedReader $pythonExe
     Open-AuthenticatedWorkspace
     $stopOnExit = $false
@@ -846,6 +838,17 @@ try {
     Write-Host '只读采集正在后台运行；本窗口可以关闭。结束使用时双击“关闭正式项目.cmd”。'
     Write-Host 'Reader 日志只含状态回执，不输出微信消息正文。'
     Write-Host ''
+
+    # The one-off history import can take a long time on a chat with years of messages, so it runs
+    # only after the workspace is already open and usable.
+    if ($SkipInitialHistory) {
+        Write-Host '已按 -SkipInitialHistory 跳过首次历史导入；实时采集照常运行。'
+    }
+    else {
+        Set-StartupStage '工作区已打开，正在后台导入本机历史消息…'
+        try { Import-InitialHistory $scope $secrets $pythonExe }
+        catch { Write-InitialHistoryWarning 'IMPORT_SKIPPED' '首次历史导入出现意外错误，工作区仍可正常使用。' }
+    }
 
 }
 catch {
