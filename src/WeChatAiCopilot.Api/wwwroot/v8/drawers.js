@@ -119,6 +119,7 @@ function identity() {
   const s=current(),scopes=s.perspective?.scopes||[];
   if(!scopes.length)return intro(`${name()} · 发送者身份校准`,'身份校准按具体会话生效，不以 sender ID 的大小作全局规则。')+placeholder('暂无可比较的两个发送者身份。请先读取真实消息。');
   return intro(`${name()} · 发送者身份校准`,'只有确认“谁是本人、谁是联系人”，AI 的上下文和记忆才有可靠方向。身份校准按具体会话生效，不以 sender ID 的大小作全局规则。')+
+  (scopes.length>1?`<div class="notice">这个会话在本机微信库里跨了 ${scopes.length} 个数据范围（不同分片、消息表或实时新增的记录），所以会看到 ${scopes.length} 个校准版本。每个范围都要各确认一次；全部确认后才会解锁人物画像与记忆沉淀。</div>`:'')+
   scopes.map((p,i)=>`<div class="notice ${p.perspectiveState!=='Confirmed'?'warn':''}">${p.perspectiveState==='Confirmed'?'当前状态：已校准。修改后相关消息和记忆按版本重新计算。':'当前状态：待人工核对。默认气泡方向不等于可靠事实。'}</div><div class="group-heading">当前身份方向 · 校准版本 ${p.calibrationVersion}</div><div class="setting-card" style="justify-content:space-around"><div style="text-align:center"><div class="avatar" style="--av:#e1f2e8;--avink:#168568;margin:auto">我</div><p style="font-size:11px;color:#82948c">当前本人方向</p></div><div style="font-size:25px;color:#96c5b4">⇄</div><div style="text-align:center"><div class="avatar" style="margin:auto">${escape(name().slice(0,1))}</div><p style="font-size:11px;color:#82948c">当前联系人方向</p></div></div><p class="intro" style="margin:12px 0">当前预览正确时确认当前方向；归属反了时互转身份。不会修改原始微信记录。</p><div style="display:flex;gap:9px">${button('confirm-identity','确认当前方向',`data-index="${i}" ${p.canConfirm?'':'disabled'}`,'primary')}${button('swap-identity','互转身份',`data-index="${i}" ${p.canConfirm?'':'disabled'}`,'primary')}</div>`).join('')||placeholder('暂无可比较的两个发送者身份。请先读取真实消息。');
 }
 function history() {
