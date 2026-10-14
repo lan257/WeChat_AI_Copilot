@@ -147,7 +147,7 @@ function health() {
     : (importState.message||'尚未记录首次历史导入结果。');
   return intro('运行状态','查看哪些能力正在工作、失败原因与恢复方法。这里只显示运行元数据。')+
   '<div class="group-heading">当前应用状态</div>'+
-  [['本机微信 Reader',o.readerState,'只读采集，监听目标独立于当前查看会话'],['PostgreSQL 消息库',o.databaseState,'消息和来源去重归档'],['AI 任务执行',o.configuredRuntime,'Quick / Balanced / Deep / Max，实际速度由模型路由决定'],['本机历史导入',importLabel,importMessage],['长期记忆沉淀',o.memoryState||'需身份确认','基于授权证据与可追溯修订'],['手机安全访问',o.mobileAccess?.state||'尚未启用','需要 HTTPS 与安全配对']].map(([title,state,description])=>card(title,description,`<span style="font-size:11px;white-space:nowrap">${escape(status(state))}</span>`)).join('')+
+  [['本机微信 Reader',o.readerState,'只读采集，监听目标独立于当前查看会话'],['PostgreSQL 消息库',o.databaseState,'消息和来源去重归档'],['AI 任务执行',o.configuredRuntime,'Quick / Balanced / Deep / Max，实际速度由模型路由决定'],['本机历史导入',importLabel,importMessage],['长期记忆沉淀',o.memoryConsolidationRuntime,'基于授权证据与可追溯修订'],['手机安全访问',o.mobileAccess?.state||'尚未启用','需要 HTTPS 与安全配对']].map(([title,state,description])=>card(title,description,`<span style="font-size:11px;white-space:nowrap">${escape(status(state))}</span>`)).join('')+
   card('诊断与恢复','前往连接中心检测失败的步骤并查看恢复建议。',button('tab','连接中心','data-tab="setup"'))+
   (current().suggestionTask?.timings?`<div class="notice">最近建议耗时：排队 ${current().suggestionTask.timings.queueMilliseconds??'未知'} ms · 上下文 ${current().suggestionTask.timings.contextMilliseconds??'未知'} ms · CLI/模型 ${current().suggestionTask.timings.cliMilliseconds??'未知'} ms · 复核 ${current().suggestionTask.timings.reviewMilliseconds??'未知'} ms · 总计 ${current().suggestionTask.timings.totalMilliseconds??'未知'} ms</div>`:'');
 }
