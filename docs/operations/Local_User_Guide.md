@@ -13,6 +13,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Setup-TrialMachine.p
 看到每行 `[OK]` 和最后的 `准备完成。` 即成功。需要把整台电脑交给别人安装时，让对方的 AI 助手按
 `docs/operations/Agent_Install_Runbook.md` 执行。
 
+如果你拿到的是**发布包**（一个 `.zip` + 一个 `.sha256` + `Install-FromPackage.ps1`），先安装再准备：
+
+```
+powershell -NoProfile -ExecutionPolicy Bypass -File Install-FromPackage.ps1 -PackageZip "安装包文件名.zip" -RunSetup
+```
+
+它会核对哈希与文件清单，装到 `%LOCALAPPDATA%\Programs\WeChatAiCopilot`；聊天数据不在这个目录里。
+打包、升级与回滚见 `docs/operations/Release_and_Upgrade.md`。
+
 ## 启动
 
 双击正式项目根目录的 `启动正式项目.cmd`。它会自动完成：准备本机私有数据库 → 构建或复用预构建应用 → 启动网页服务 → 启动只读采集 → **打开浏览器并自动建立本机会话**（不需要复制任何令牌）。

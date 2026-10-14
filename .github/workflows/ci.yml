@@ -39,21 +39,40 @@ jobs:
       - name: Reader offline tests
         run: python -m unittest discover -s tests/reader_tests -p 'test_*.py' -v
 
-      - name: Self-contained publish (what a trial machine actually receives)
-        run: >-
-          dotnet publish src/WeChatAiCopilot.Api/WeChatAiCopilot.Api.csproj
-          -c Release -r win-x64 --self-contained true
-          -o artifacts/app/win-x64 --nologo
+      - name: Build the shippable package (same code path a maintainer runs locally)
+        shell: pwsh
+        run: ./scripts/Build-ReleasePackage.ps1
 
-      - name: Check the published app carries the V8 entry page and assets
+      - name: Install the package like a recipient would, then boot it without a database
         shell: pwsh
         run: |
-          $root = 'artifacts/app/win-x64'
-          if (-not (Test-Path "$root/WeChatAiCopilot.Api.exe")) { throw 'published executable missing' }
-          $index = Get-Content "$root/wwwroot/index.html" -Raw
-          if ($index -notmatch '/v8/main\.js') { throw 'published entry page is not the V8 shell' }
-          foreach ($asset in @('wwwroot/v8/main.js', 'wwwroot/v8/chat.js', 'wwwroot/v8/drawers.js', 'wwwroot/v8/styles.css')) {
-            if (-not (Test-Path "$root/$asset")) { throw "published asset missing: $asset" }
+          $zip = Get-ChildItem 'artifacts/release/*.zip' | Select-Object -First 1
+          if (-not $zip) { throw '发布包没有生成' }
+          ./scripts/Install-FromPackage.ps1 -PackageZip $zip.FullName `
+            -InstallRoot "$env:LOCALAPPDATA\Programs\WeChatAiCopilotCi"
+          $root = "$env:LOCALAPPDATA\Programs\WeChatAiCopilotCi\artifacts\app\win-x64"
+          $exe = Join-Path $root 'WeChatAiCopilot.Api.exe'
+          if (-not (Test-Path $exe)) { throw '安装后的可执行文件不存在' }
+          $env:ASPNETCORE_URLS = 'http://127.0.0.1:5099'
+          $process = Start-Process $exe -WorkingDirectory $root -PassThru
+          try {
+            $live = $false
+            for ($i = 0; $i -lt 30; $i++) {
+              Start-Sleep -Seconds 2
+              try {
+                $r = Invoke-WebRequest 'http://127.0.0.1:5099/health/live' -UseBasicParsing -TimeoutSec 3
+                if ($r.StatusCode -eq 200) { $live = $true; break }
+              } catch { }
+            }
+            if (-not $live) { throw '安装后的应用在本机启动不起来（没有数据库时应仍能提供存活探针）' }
+            $asset = Invoke-WebRequest 'http://127.0.0.1:5099/v8/main.js' -UseBasicParsing
+            if ($asset.Headers['Cache-Control'] -notmatch 'no-store') { throw '发布包里的静态资源仍会被浏览器缓存' }
+          } finally {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            # The installed copy owns no user data; removing it keeps the runner clean.
+            $probe = Get-NetTCPConnection -LocalPort 5099 -State Listen -ErrorAction SilentlyContinue
+            if ($probe) { Stop-Process -Id $probe.OwningProcess -Force -ErrorAction SilentlyContinue }
+            Remove-Item -LiteralPath "$env:LOCALAPPDATA\Programs\WeChatAiCopilotCi" -Recurse -Force -ErrorAction SilentlyContinue
           }
 
       - name: Check no runtime data or secrets are published
@@ -67,6 +86,13 @@ jobs:
         with:
           name: app-win-x64
           path: artifacts/app/win-x64
+          if-no-files-found: error
+
+      - name: Upload the release package for hand-off
+        uses: actions/upload-artifact@v4
+        with:
+          name: wechat-ai-copilot-release
+          path: artifacts/release/*
           if-no-files-found: error
 
   postgres-integration:

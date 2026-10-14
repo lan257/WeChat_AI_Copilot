@@ -96,5 +96,47 @@
 ## 已知未做
 
 - V8.1「采集异常」候选仍待批准（本批没有擅自实现）。
-- §4 发行门槛（可复现便携包、安装器、签名）仍在进行。
 - 极简模式视觉还原、`execCommand` 二级复制兜底、手机 HTTPS 配对仍未在真实设备验收。
+
+---
+
+# 续：`#15` 发行门槛（可交付的包与安装步骤）
+
+评审 §4 说“当前是源代码 + 启动脚本，不是开箱即用的可分发 Windows 应用”。这一批把它推到
+“包 + 校验 + 安装 + 升级/回滚有文档”，仍然**没有**代码签名。
+
+- 新增 `scripts/Build-ReleasePackage.ps1`：自包含生成 → 打包（保留仓库布局，启动脚本零改动复用）→
+  写 `release-manifest.json` / `SHA256SUMS.txt` / `VERSION.txt` → zip → 对 zip 反开自检必需文件与入口页
+  是否指向 `/v8/main.js`。`-SkipPublish` 会先比较源码与已生成应用的修改时间，源码更新过就拒绝，
+  避免把昨天的程序发出去（这条在实际开发中真的踩到了：第一次 `-SkipPublish` 打出了昨天的 wwwroot，
+  发布包里既没有新的 `no-store` 也没有新的补录按钮）。
+- 新增 `scripts/Install-FromPackage.ps1`：核对 zip SHA-256（缺 `.sha256` 或值不符直接拒绝）→ 解压到临时目录
+  并按清单逐文件核对哈希 → 检查目标目录没有正在运行的本程序 → 镜像安装到
+  `%LOCALAPPDATA%\Programs\WeChatAiCopilot`。组件准备与快捷方式继续走
+  `Setup-TrialMachine.ps1`（`-RunSetup` 串起来），不留第二套安装逻辑。
+- 两个脚本自身踩到的 PowerShell 5.1 坑：`-LiteralPath` 不吃通配符（导致复制出 5 MB 的残包）、
+  `Get-Content -Raw` 默认按 ANSI 解码无 BOM 的 UTF-8（导致中文文件名核对失败）、
+  .NET Framework 的 zip 条目名用反斜杠（导致自检误报缺文件）。
+- `docs/operations/Release_and_Upgrade.md`：打包、交付三件套、安装、升级（升级前自动备份 + 恢复演练）、
+  回滚，以及**未签名**的实话（SmartScreen 提示怎么处理，绝不建议关闭安全功能）。
+- `Trial_Deployment_Guide.md` / `Agent_Install_Runbook.md` / `Local_User_Guide.md`：改成包优先，
+  git 源码路径降为开发者备选；顺手纠正“首次只导入最近 90 天”“建议要等 30–60 秒”两条已经过期的说法。
+- `.github/workflows/ci.yml`：Windows job 不再自己 `dotnet publish`，改为调用同一个打包脚本，
+  然后像收件人一样安装、在没有数据库的情况下启动安装后的 exe、验证 `/health/live` 与
+  `/v8/main.js` 的 `Cache-Control: no-store`，并把 `artifacts/release/*` 作为构建产物上传。
+
+### 本机实测
+
+| 步骤 | 结果 |
+| --- | --- |
+| 打包 | 631 个文件、52.4 MB、zip 自检通过；`RELEASE.txt` 与 `Install-FromPackage.ps1` 落在包外 |
+| 安装（模拟收件人目录） | SHA-256 一致 → 631 个文件逐一哈希核对通过 → 安装到位 |
+| 安装后启动 | 无数据库配置下 `/health/live` 200、根路径 200、`/health/ready` 如实返回 `database: not-configured`；`/`、`/v8/main.js`、`/v8/styles.css`、`/v8/drawers.js` 全部 `Cache-Control: no-store`；包内 `drawers.js` 含新的 `backfill-full` |
+| 缺 `.sha256` | 拒绝安装并提示 |
+| `.sha256` 值不符 | 拒绝安装，回报期望值与实际值 |
+| `-SkipPublish` 遇到旧产物 | 拒绝并指出源码更新过 |
+| 回归 | .NET 266 项、reader 31 项全部通过；两个脚本通过 PowerShell 解析器检查 |
+
+**未验收**：真机（另一台电脑）上没有干净环境可测，CI 的 Windows runner 流程是本机按同一路径模拟的；
+桌面快捷方式、微信登录状态与只读组件在别人机器上的表现仍未验证；zip 本身不是字节级可复现产物。
+

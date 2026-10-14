@@ -39,7 +39,23 @@ Get-Process Weixin -ErrorAction SilentlyContinue | Select-Object -First 1 Id,Pat
 
 若 `artifacts\app\win-x64\WeChatAiCopilot.Api.exe` 不存在且没有 .NET SDK：**不要尝试安装 SDK 或改代码**，直接告知使用者“安装包不完整，需要开发机重新生成 artifacts 目录”。
 
-## 2. 获取代码并准备环境
+## 2. 取到程序并准备环境
+
+**优先走发布包**（使用者从聊天工具/网盘拿到三个文件：`…-win-x64.zip`、`….zip.sha256`、`Install-FromPackage.ps1`）。
+先向使用者确认这三个文件放在哪个目录，然后在该目录执行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File Install-FromPackage.ps1 -PackageZip "<安装包文件名>.zip" -RunSetup
+```
+
+安装脚本会核对 SHA-256、逐文件核对 `release-manifest.json`、镜像安装到
+`%LOCALAPPDATA%\Programs\WeChatAiCopilot`，再自动接着做下面的环境准备。
+**哈希核对不通过就停止**，把期望值与实际值一起回报，不要加 `-SkipHashCheck` 蒙过去。
+Windows 弹出未签名提示时，说明原因并让使用者本人决定，不要为了绕开提示关闭系统安全功能。
+
+装完后，脚本所在目录就是后续步骤里的 `<项目目录>`（结构与仓库 `product` 一致）。
+
+只有当使用者是开发者、要求从源码运行时，才走这条：
 
 ```powershell
 git clone https://github.com/lan257/WeChat_AI_Copilot.git
@@ -48,8 +64,7 @@ cd WeChat_AI_Copilot\product
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Setup-TrialMachine.ps1 -Yes
 ```
 
-脚本会依次处理：64 位检查、PostgreSQL 18、Python 3.11、只读采集组件、应用本体、桌面快捷方式。
-期望输出每一行以 `[OK]` 开头，最后出现 `准备完成。`。
+两种方式最后都期望：每一行以 `[OK]` 开头，最后出现 `准备完成。`。
 
 - 出现 `[RUN]` 表示正在安装/下载，属正常，等待即可。
 - 出现 `[FAIL]` 按提示处理；只有“既没有预构建应用也没有 .NET SDK”这一条需要回到 §1。
