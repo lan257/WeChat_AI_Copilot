@@ -22,3 +22,7 @@ venv/
 # IDE state
 .vs/
 .idea/
+
+# Prebuilt trial output: distributed by copying the folder, never committed
+artifacts/
+publish/

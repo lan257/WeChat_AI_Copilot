@@ -755,6 +755,49 @@ def _run_scope_resolution(args: argparse.Namespace, db_module: Any) -> None:
         shutil.rmtree(workdir, ignore_errors=True)
 
 
+def _run_list_contacts(args: argparse.Namespace, db_module: Any) -> None:
+    """List the direct conversations available on this machine, for an interactive picker.
+
+    Chatrooms and official accounts are already excluded by the discovery helper. The result is
+    written to a file inside the private state directory instead of stdout so contact names never
+    end up in a shell log.
+    """
+    output_path = Path(os.path.abspath(args.output))
+    output_parent = os.path.normcase(os.path.abspath(os.path.dirname(args.output)))
+    state_root = Path(output_parent)
+    is_private_formal_root = (
+        state_root.name.casefold() == "formal"
+        and state_root.parent.name.casefold() == "wechataicopilot"
+    )
+    if not is_private_formal_root or output_path.name != "contacts.tmp.json":
+        raise ReaderFailure("CONTACTS_LIST_PATH_INVALID")
+
+    with _quiet_upstream_output():
+        data_dir = db_module.auto_detect_db_dir()
+    if not data_dir:
+        raise ReaderFailure("WECHAT_DATABASE_NOT_FOUND")
+
+    workdir = Path(tempfile.mkdtemp(prefix="weca-contacts-"))
+    try:
+        with _quiet_upstream_output():
+            database = _readonly_database_class(db_module.WeChatDB)(
+                db_dir=data_dir,
+                workdir=str(workdir),
+                keys_file=str(workdir / "ephemeral-keys.json"),
+            )
+        contacts = _discover_session_directory(database)
+        output_path.write_text(
+            json.dumps({"items": contacts}, ensure_ascii=False, separators=(",", ":")),
+            encoding="utf-8",
+        )
+    except ReaderFailure:
+        raise
+    except Exception:
+        raise ReaderFailure("CONTACTS_LIST_FAILED") from None
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+
+
 def _as_string(value: Any) -> str | None:
     if value is None:
         return None
@@ -1337,6 +1380,8 @@ def _build_parser() -> argparse.ArgumentParser:
     resolve_scope = subparsers.add_parser("resolve-scope", help="resolve one exact approved direct contact name without reading message content")
     resolve_scope.add_argument("--request-file", required=True)
     resolve_scope.add_argument("--output", required=True)
+    contacts = subparsers.add_parser("list-contacts", help="list readable direct conversations into a private state file")
+    contacts.add_argument("--output", required=True)
     history = subparsers.add_parser("history", help="emit bounded HistoryBatchV1 JSON lines")
     history.add_argument("--job-id", required=True)
     history.add_argument("--from-utc")
@@ -1353,6 +1398,9 @@ def main() -> int:
             raise ReaderFailure("WINDOWS_REQUIRED")
         if args.command == "resolve-scope":
             _run_scope_resolution(args, _import_readonly_module())
+            return 0
+        if args.command == "list-contacts":
+            _run_list_contacts(args, _import_readonly_module())
             return 0
         settings = _load_settings()
         db_module = _import_readonly_module()

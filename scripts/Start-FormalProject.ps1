@@ -1,4 +1,9 @@
-﻿$ErrorActionPreference = 'Stop'
+﻿param(
+    [switch]$SkipInitialHistory,
+    [switch]$ReauthorizeContact
+)
+
+$ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $productRoot = Split-Path -Parent $PSScriptRoot
@@ -17,6 +22,7 @@ $databasePort = 55432
 $baseUrl = 'http://127.0.0.1:5080'
 $historyMarker = Join-Path $stateRoot 'initial-history-imported.json'
 $apiPidPath = Join-Path $stateRoot 'api.pid'
+$publishedExePath = Join-Path $productRoot 'artifacts\app\win-x64\WeChatAiCopilot.Api.exe'
 $apiLogPath = Join-Path $stateRoot 'api.log'
 $apiErrorPath = Join-Path $stateRoot 'api-error.log'
 $stagePath = Join-Path $stateRoot 'startup-stage.txt'
@@ -137,6 +143,28 @@ function Resolve-ReaderPython311 {
     throw '未找到可运行已准备 Reader 组件的 Python 3.11。请确认已为当前 Windows 用户安装 Python 3.11 后再次启动；完成此项检查前不会初始化本机数据库。'
 }
 
+function Get-AppSourceNewerThan([string] $artifactPath) {
+    if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) { return 'missing' }
+    $builtAt = (Get-Item -LiteralPath $artifactPath).LastWriteTimeUtc
+    $changedSource = Get-ChildItem -LiteralPath $apiProject -Recurse -File | Where-Object {
+        $_.FullName -notmatch '[\\/](bin|obj|publish|artifacts)[\\/]' -and
+        $_.Extension -in @('.cs', '.csproj', '.json', '.html', '.css', '.js') -and
+        $_.LastWriteTimeUtc -gt $builtAt
+    } | Select-Object -First 1
+    if ($null -ne $changedSource) { return $changedSource.FullName }
+    $changedMigration = Get-ChildItem -LiteralPath (Join-Path $productRoot 'db\migrations') -File |
+        Where-Object { $_.LastWriteTimeUtc -gt $builtAt } | Select-Object -First 1
+    if ($null -ne $changedMigration) { return $changedMigration.FullName }
+    return $null
+}
+
+# The API can run either as "dotnet <dll>" or as the self-contained published executable.
+function Test-ApiProcessOfThisProject($candidate) {
+    if (-not $candidate) { return $false }
+    $dllPath = Join-Path $apiProject 'bin\Release\net10.0\WeChatAiCopilot.Api.dll'
+    return ($candidate.CommandLine -like ('*' + $dllPath + '*')) -or ($candidate.CommandLine -like ('*' + $publishedExePath + '*'))
+}
+
 function Get-ScopeFingerprint($scope) {
     $identity = @(
         [string]$scope.provider,
@@ -164,6 +192,39 @@ function Test-ValidLocalScope($scope) {
 function Save-LocalScopeApproval($scope) {
     $fingerprint = Get-ScopeFingerprint $scope
     [System.IO.File]::WriteAllText($approvedScopePath, $fingerprint, [System.Text.UTF8Encoding]::new($false))
+}
+
+# Asking someone to type a WeChat display name exactly is the most fragile step of the first run,
+# so offer the readable one-to-one conversations as a numbered list instead.
+function Get-LocalContactSelection([string] $pythonExe) {
+    $contactsPath = Join-Path $stateRoot 'contacts.tmp.json'
+    Remove-Item -LiteralPath $contactsPath -Force -ErrorAction SilentlyContinue
+    try {
+        & $pythonExe $readerScript 'list-contacts' '--output' $contactsPath *> $null
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $contactsPath -PathType Leaf)) { return $null }
+        $items = (([System.IO.File]::ReadAllText($contactsPath, [System.Text.Encoding]::UTF8)) | ConvertFrom-Json).items
+    } catch { return $null }
+    finally { Remove-Item -LiteralPath $contactsPath -Force -ErrorAction SilentlyContinue }
+
+    $named = @($items | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.displayName) })
+    if ($named.Count -eq 0) { return $null }
+    Write-Host ''
+    Write-Host '请选择要授权读取的联系人（只有这一个一对一会话会被读取，群聊与公众号不可选）：'
+    $index = 0
+    foreach ($item in $named) {
+        $index++
+        Write-Host ('  {0}. {1}' -f $index, [string]$item.displayName)
+    }
+    Write-Host ''
+    while ($true) {
+        $answer = Read-Host ('输入编号 1-' + $named.Count + '（直接回车跳过手动输入）')
+        if ([string]::IsNullOrWhiteSpace($answer)) { return $null }
+        $picked = 0
+        if ([int]::TryParse($answer.Trim(), [ref]$picked) -and $picked -ge 1 -and $picked -le $named.Count) {
+            return [string]$named[$picked - 1].displayName
+        }
+        Write-Host '输入无效，请重新输入。'
+    }
 }
 
 function Resolve-LocalContactScope([string] $pythonExe, [string] $displayName, [string] $wechatExecutablePath) {
@@ -204,7 +265,7 @@ function Get-ApprovedLocalScope([string] $pythonExe) {
         catch { $existingScope = $null }
     }
 
-    if ($existingScope) {
+    if ($existingScope -and -not $ReauthorizeContact) {
         $expectedFingerprint = Get-ScopeFingerprint $existingScope
         $savedFingerprint = if (Test-Path -LiteralPath $approvedScopePath) { (Get-Content -Raw -LiteralPath $approvedScopePath).Trim() } else { '' }
         if ($savedFingerprint -eq $expectedFingerprint) { return $existingScope }
@@ -215,11 +276,14 @@ function Get-ApprovedLocalScope([string] $pythonExe) {
         throw '请先打开并登录微信，然后重新启动正式项目以确认所选联系人。'
     }
 
-    if ($existingScope) {
-        $displayName = Read-Host "当前配置尚未确认或已更改。请输入要使用的一对一联系人显示名（当前配置：$($existingScope.displayName)）"
-    }
-    else {
-        $displayName = Read-Host '请输入要连接的一对一联系人显示名'
+    $displayName = Get-LocalContactSelection $pythonExe
+    if ([string]::IsNullOrWhiteSpace($displayName)) {
+        if ($existingScope) {
+            $displayName = Read-Host "当前配置尚未确认或已更改。请输入要使用的一对一联系人显示名（当前配置：$($existingScope.displayName)）"
+        }
+        else {
+            $displayName = Read-Host '请输入要连接的一对一联系人显示名'
+        }
     }
 
     $displayName = [string]$displayName
@@ -450,9 +514,7 @@ function Start-FormalApi($scope, $secrets) {
         if ([int]::TryParse((Get-Content -Raw -LiteralPath $apiPidPath), [ref]$candidateId)) {
             $processFilter = 'ProcessId=' + [string]$candidateId
             $candidate = Get-CimInstance Win32_Process -Filter $processFilter -ErrorAction SilentlyContinue
-            if ($candidate -and $candidate.CommandLine -like ('*' + (Join-Path $apiProject 'bin\Release\net10.0\WeChatAiCopilot.Api.dll') + '*')) {
-                $existingProcessId = $candidateId
-            }
+            if (Test-ApiProcessOfThisProject $candidate) { $existingProcessId = $candidateId }
         }
     }
     if ($existingProcessId -gt 0) {
@@ -467,22 +529,32 @@ function Start-FormalApi($scope, $secrets) {
     try { $listener.Start(); $listener.Stop() }
     catch { throw 'The local Web address is already in use. No new listener was opened.' }
 
-    $dotnet = (Get-Command dotnet.exe -ErrorAction SilentlyContinue).Source
-    if (-not $dotnet) { throw '.NET 10 is not installed. The one-click launcher cannot start the formal app.' }
-    $buildLog = Join-Path $stateRoot 'build.log'
     $apiDll = Join-Path $apiProject 'bin\Release\net10.0\WeChatAiCopilot.Api.dll'
-    $requiresBuild = -not (Test-Path -LiteralPath $apiDll)
-    if (-not $requiresBuild) {
-        $builtAt = (Get-Item -LiteralPath $apiDll).LastWriteTimeUtc
-        $changedSource = Get-ChildItem -LiteralPath $apiProject -Recurse -File | Where-Object { $_.FullName -notmatch '[\\/](bin|obj)[\\/]' -and $_.Extension -in @('.cs','.csproj','.json','.html','.css','.js') -and $_.LastWriteTimeUtc -gt $builtAt } | Select-Object -First 1
-        $changedMigration = Get-ChildItem -LiteralPath (Join-Path $productRoot 'db\migrations') -File | Where-Object { $_.LastWriteTimeUtc -gt $builtAt } | Select-Object -First 1
-        $requiresBuild = $null -ne $changedSource -or $null -ne $changedMigration
+    $dotnet = (Get-Command dotnet.exe -ErrorAction SilentlyContinue).Source
+    $buildLog = Join-Path $stateRoot 'build.log'
+
+    # A trial machine ships the self-contained app and has no .NET SDK, so the prebuilt executable is
+    # preferred. A development machine that still has the SDK rebuilds whenever sources move ahead.
+    $runPublished = $false
+    if (Test-Path -LiteralPath $publishedExePath -PathType Leaf) {
+        $publishedStale = Get-AppSourceNewerThan $publishedExePath
+        if ($null -eq $publishedStale) { $runPublished = $true }
+        elseif (-not $dotnet) {
+            Write-Host '警告：预构建版本落后于源码，但本机没有 .NET SDK，按已发布版本运行。'
+            $runPublished = $true
+        }
+        else { Write-Host '预构建版本落后于源码，本次改用源码构建运行。' }
     }
+    elseif (-not $dotnet) {
+        throw '本机既没有预构建应用，也没有 .NET SDK。请在有 SDK 的电脑上运行 scripts\Setup-TrialMachine.ps1 生成 artifacts\app\win-x64，并与项目一起复制过去。'
+    }
+
+    $requiresBuild = -not $runPublished
     if ($requiresBuild) {
         & $dotnet 'build' (Join-Path $productRoot 'WeChatAiCopilot.sln') '-c' 'Release' '--nologo' '-v:q' *> $buildLog
         if ($LASTEXITCODE -ne 0) { throw 'The formal app could not be built. See the local build log under the application data folder.' }
     }
-    if (-not (Test-Path -LiteralPath $apiDll)) { throw 'The formal app build did not produce the expected API file.' }
+    if (-not $runPublished -and -not (Test-Path -LiteralPath $apiDll)) { throw 'The formal app build did not produce the expected API file.' }
 
     $env:ASPNETCORE_URLS = $baseUrl
     $env:ASPNETCORE_ENVIRONMENT = 'Production'
@@ -545,7 +617,12 @@ function Start-FormalApi($scope, $secrets) {
     $env:Agent__AllowedReadCapabilities__2 = 'GetContactMemory'
     $env:Agent__AllowedReadCapabilities__3 = 'GetMessageEvidence'
     try {
-        $process = Start-Process -FilePath $dotnet -ArgumentList @($apiDll) -WorkingDirectory $apiProject -WindowStyle Hidden -PassThru -RedirectStandardOutput $apiLogPath -RedirectStandardError $apiErrorPath
+        if ($runPublished) {
+            $process = Start-Process -FilePath $publishedExePath -WorkingDirectory (Split-Path -Parent $publishedExePath) -WindowStyle Hidden -PassThru -RedirectStandardOutput $apiLogPath -RedirectStandardError $apiErrorPath
+        }
+        else {
+            $process = Start-Process -FilePath $dotnet -ArgumentList @($apiDll) -WorkingDirectory $apiProject -WindowStyle Hidden -PassThru -RedirectStandardOutput $apiLogPath -RedirectStandardError $apiErrorPath
+        }
         $script:apiStartedByLauncher = $true
         Set-Content -LiteralPath $apiPidPath -Value $process.Id -Encoding ascii
     }
@@ -590,9 +667,20 @@ function Get-HistoryImportFailureCode([string] $path) {
     return $null
 }
 
+function Write-InitialHistoryWarning([string] $code, [string] $message) {
+    $warningPath = Join-Path $stateRoot 'initial-history-warning.json'
+    $payload = [ordered]@{ code = $code; message = $message; atUtc = [DateTime]::UtcNow.ToString('o') }
+    [System.IO.File]::WriteAllText($warningPath, ($payload | ConvertTo-Json -Compress), [System.Text.UTF8Encoding]::new($false))
+    Write-Host "历史消息暂未导入（$code）：$message 应用其余功能可以正常使用，稍后可在「设置 → 联系人与会话 → 历史补录」重试。"
+}
+
 function Import-InitialHistory($scope, $secrets, [string] $pythonExe) {
     if (Test-Path -LiteralPath $historyMarker) { return }
-    if (-not (Test-Path -LiteralPath $readerScript)) { throw 'The formal Reader source is missing.' }
+    Remove-Item -LiteralPath (Join-Path $stateRoot 'initial-history-warning.json') -Force -ErrorAction SilentlyContinue
+    if (-not (Test-Path -LiteralPath $readerScript)) {
+        Write-InitialHistoryWarning 'READER_SOURCE_MISSING' '本机读取组件缺失。'
+        return
+    }
 
     $readerSettings = Join-Path $readerSettingsRoot 'settings.json'
     Write-ReaderSettings $scope $secrets
@@ -608,11 +696,12 @@ function Import-InitialHistory($scope, $secrets, [string] $pythonExe) {
     }
     finally { $ErrorActionPreference = $previousErrorActionPreference }
     if ($readerExitCode -ne 0 -and -not (Test-CompletedHistoryImportReceipt $historyLog)) {
+        # First run must stay usable: an unreadable WeChat database is a recoverable condition, and the
+        # realtime reader keeps working even when the one-off history import cannot finish.
         $failureCode = Get-HistoryImportFailureCode $historyLog
-        if ($failureCode) {
-            throw "The real WeChat history import failed ($failureCode); no synthetic messages were used. See the sanitized Reader status log."
-        }
-        throw "The real WeChat history import failed (Reader exit code $readerExitCode); no synthetic messages were used. See the sanitized Reader status log."
+        if (-not $failureCode) { $failureCode = "READER_EXIT_$readerExitCode" }
+        Write-InitialHistoryWarning $failureCode '首次历史导入未完成。'
+        return
     }
 
     $psql = Join-Path (Resolve-PostgresBin) 'psql.exe'
@@ -625,7 +714,7 @@ function Import-InitialHistory($scope, $secrets, [string] $pythonExe) {
     $env:PGPASSWORD = $secrets.DatabasePassword
     try {
         & $psql '-X' '-q' '-v' 'ON_ERROR_STOP=1' '-h' '127.0.0.1' '-p' "$databasePort" '-U' $databaseUser '-d' $databaseName '-f' $metadataSqlPath *> $null
-        if ($LASTEXITCODE -ne 0) { throw 'The selected contact label could not be saved.' }
+        if ($LASTEXITCODE -ne 0) { Write-InitialHistoryWarning 'CONTACT_LABEL_NOT_SAVED' '联系人名称未能写入，消息本身不受影响。' }
     }
     finally {
         Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
@@ -643,8 +732,14 @@ function Import-InitialHistory($scope, $secrets, [string] $pythonExe) {
         }
         finally { $response.Dispose() }
     }
-    catch { throw 'History import completed, but the formal Web workspace could not verify the selected conversation.' }
-    if ($conversation.displayName -ne $scope.displayName) { throw 'The Web workspace did not return the selected contact label.' }
+    catch {
+        Write-InitialHistoryWarning 'CONVERSATION_VERIFY_PENDING' '消息已尝试导入，但工作区未能立即确认该会话；下次启动会自动重试。'
+        return
+    }
+    if ($conversation.displayName -ne $scope.displayName) {
+        Write-InitialHistoryWarning 'CONTACT_LABEL_MISMATCH' '导入完成，但工作区返回的联系人名称与授权名称不一致；下次启动会自动重试。'
+        return
+    }
     [System.IO.File]::WriteAllText($historyMarker, (ConvertTo-Json @{ importedAtUtc = [DateTime]::UtcNow.ToString('o'); jobId = $jobId }), [System.Text.UTF8Encoding]::new($false))
 }
 
@@ -661,9 +756,7 @@ function Stop-FormalServices([string] $bin) {
         $candidateId = 0
         if ([int]::TryParse((Get-Content -Raw -LiteralPath $apiPidPath), [ref]$candidateId)) {
             $candidate = Get-CimInstance Win32_Process -Filter "ProcessId=$candidateId" -ErrorAction SilentlyContinue
-            if ($candidate -and $candidate.CommandLine -like ('*' + (Join-Path $apiProject 'bin\Release\net10.0\WeChatAiCopilot.Api.dll') + '*')) {
-                Stop-Process -Id $candidateId -Force -ErrorAction SilentlyContinue
-            }
+            if (Test-ApiProcessOfThisProject $candidate) { Stop-Process -Id $candidateId -Force -ErrorAction SilentlyContinue }
         }
         Remove-Item -LiteralPath $apiPidPath -Force -ErrorAction SilentlyContinue
     }
@@ -737,7 +830,13 @@ try {
     Write-Host '本机数据库已就绪。正在构建并启动正式工作区…'
     Write-ReaderSettings $scope $secrets
     Start-FormalApi $scope $secrets
-    Import-InitialHistory $scope $secrets $pythonExe
+    if ($SkipInitialHistory) {
+        Write-Host '已按 -SkipInitialHistory 跳过首次历史导入；实时采集照常运行。'
+    }
+    else {
+        try { Import-InitialHistory $scope $secrets $pythonExe }
+        catch { Write-InitialHistoryWarning 'IMPORT_SKIPPED' '首次历史导入出现意外错误，已跳过并继续打开工作区。' }
+    }
 
     Start-ManagedReader $pythonExe
     Open-AuthenticatedWorkspace

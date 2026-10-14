@@ -4,13 +4,22 @@ $productRoot = Split-Path -Parent $PSScriptRoot
 $stateRoot = Join-Path $env:LOCALAPPDATA 'WeChatAiCopilot\Formal'
 $readerScript = Join-Path $productRoot 'src\WeChatAiCopilot.Reader\reader.py'
 $apiDll = Join-Path $productRoot 'src\WeChatAiCopilot.Api\bin\Release\net10.0\WeChatAiCopilot.Api.dll'
-foreach ($entry in @(@{ file = 'reader.pid'; owned = $readerScript }, @{ file = 'api.pid'; owned = $apiDll })) {
+$apiPublishedExe = Join-Path $productRoot 'artifacts\app\win-x64\WeChatAiCopilot.Api.exe'
+
+# The API runs either as "dotnet <dll>" or as the self-contained published executable.
+function Test-OwnedProcess($candidate, $needles) {
+    if (-not $candidate) { return $false }
+    foreach ($needle in $needles) { if ($candidate.CommandLine -like ('*' + $needle + '*')) { return $true } }
+    return $false
+}
+
+foreach ($entry in @(@{ file = 'reader.pid'; owned = @($readerScript) }, @{ file = 'api.pid'; owned = @($apiDll, $apiPublishedExe) })) {
     $pidPath = Join-Path $stateRoot $entry.file
     if (-not (Test-Path -LiteralPath $pidPath)) { continue }
     $ownedProcessId = 0
     if ([int]::TryParse((Get-Content -LiteralPath $pidPath -Raw), [ref]$ownedProcessId)) {
         $candidate = Get-CimInstance Win32_Process -Filter ('ProcessId=' + $ownedProcessId) -ErrorAction SilentlyContinue
-        if ($candidate -and $candidate.CommandLine -like ('*' + $entry.owned + '*')) {
+        if (Test-OwnedProcess $candidate $entry.owned) {
             if ($entry.file -eq 'reader.pid') {
                 $stopRequest = Join-Path $stateRoot ('reader-stop-' + $ownedProcessId + '.request')
                 [IO.File]::WriteAllText($stopRequest, 'stop', [Text.UTF8Encoding]::new($false))
@@ -19,7 +28,7 @@ foreach ($entry in @(@{ file = 'reader.pid'; owned = $readerScript }, @{ file = 
                     Start-Sleep -Milliseconds 250
                     $candidate = Get-CimInstance Win32_Process -Filter ('ProcessId=' + $ownedProcessId) -ErrorAction SilentlyContinue
                 } while ($candidate -and [DateTime]::UtcNow -lt $deadline)
-                if ($candidate -and $candidate.CommandLine -like ('*' + $entry.owned + '*')) { Stop-Process -Id $ownedProcessId -Force -ErrorAction SilentlyContinue }
+                if (Test-OwnedProcess $candidate $entry.owned) { Stop-Process -Id $ownedProcessId -Force -ErrorAction SilentlyContinue }
                 Remove-Item -LiteralPath $stopRequest -Force -ErrorAction SilentlyContinue
             }
             else { Stop-Process -Id $ownedProcessId -Force -ErrorAction SilentlyContinue }
