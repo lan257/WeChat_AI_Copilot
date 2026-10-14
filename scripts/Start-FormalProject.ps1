@@ -829,18 +829,31 @@ try {
 
     Write-Host '本机数据库已就绪。正在构建并启动正式工作区…'
     Write-ReaderSettings $scope $secrets
+    # Migrations are applied when the API starts. Whenever a migration file is newer than the last
+    # verified backup, take one and restore it into a scratch database first; upgrading without a
+    # proven backup is the failure mode this guards against.
+    $backupScript = Join-Path $PSScriptRoot 'Backup-FormData.ps1'
+    if ((Test-Path -LiteralPath $secretsPath) -and (Test-Path -LiteralPath $backupScript) -and (Test-Path -LiteralPath (Join-Path $dataRoot 'PG_VERSION'))) {
+        $backupDir = Join-Path $stateRoot 'backups'
+        $lastBackup = Get-ChildItem -LiteralPath $backupDir -Filter 'formal-*.dump' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        $newestMigration = Get-ChildItem -LiteralPath (Join-Path $productRoot 'db\migrations') -Filter '*.sql' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        $needsBackup = ($null -eq $lastBackup) -or ($null -ne $newestMigration -and $newestMigration.LastWriteTimeUtc -gt $lastBackup.LastWriteTimeUtc)
+        if ($needsBackup) {
+            Set-StartupStage '数据库即将升级，正在备份并演练恢复…'
+            $backupExit = 0
+            & (Get-Command powershell.exe).Source -NoProfile -ExecutionPolicy Bypass -File $backupScript -Verify -Keep 10
+            $backupExit = $LASTEXITCODE
+            if ($backupExit -ne 0) {
+                throw '自动备份或恢复演练未通过，已中止启动以免在无可用备份的情况下升级数据库。请查看 ' + $backupDir + ' 下的日志后重试。'
+            }
+        }
+    }
+
     Start-FormalApi $scope $secrets
     Start-ManagedReader $pythonExe
     Open-AuthenticatedWorkspace
-    $stopOnExit = $false
-    Write-Host ''
-    Write-Host '正式工作区已启动，浏览器已自动建立本机安全会话，无需复制令牌。'
-    Write-Host '只读采集正在后台运行；本窗口可以关闭。结束使用时双击“关闭正式项目.cmd”。'
-    Write-Host 'Reader 日志只含状态回执，不输出微信消息正文。'
-    Write-Host ''
 
-    # The one-off history import can take a long time on a chat with years of messages, so it runs
-    # only after the workspace is already open and usable.
+    # The workspace is already open at this point; a long first-time import must not sit in front of it.
     if ($SkipInitialHistory) {
         Write-Host '已按 -SkipInitialHistory 跳过首次历史导入；实时采集照常运行。'
     }
@@ -849,6 +862,13 @@ try {
         try { Import-InitialHistory $scope $secrets $pythonExe }
         catch { Write-InitialHistoryWarning 'IMPORT_SKIPPED' '首次历史导入出现意外错误，工作区仍可正常使用。' }
     }
+
+    $stopOnExit = $false
+    Write-Host ''
+    Write-Host '正式工作区已启动，浏览器已自动建立本机安全会话，无需复制令牌。'
+    Write-Host '只读采集正在后台运行；本窗口可以关闭。结束使用时双击“关闭正式项目.cmd”。'
+    Write-Host 'Reader 日志只含状态回执，不输出微信消息正文。'
+    Write-Host ''
 
 }
 catch {
