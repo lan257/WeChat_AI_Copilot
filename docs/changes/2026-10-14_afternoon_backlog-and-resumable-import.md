@@ -140,3 +140,59 @@
 **未验收**：真机（另一台电脑）上没有干净环境可测，CI 的 Windows runner 流程是本机按同一路径模拟的；
 桌面快捷方式、微信登录状态与只读组件在别人机器上的表现仍未验证；zip 本身不是字节级可复现产物。
 
+---
+
+# 续：AI 队列指标 + 一次真实的故障排查（含两条更正）
+
+## 队列公平性与指标
+
+两个工作循环 + 全局 FIFO 意味着一个联系人连发多条任务时，其它联系人只能干等，而且界面只有一个转圈。
+
+- `AsyncAgentTasksV6.ExecuteNextAsync` 领取任务改为先按“该会话已有多少待处理/进行中”排序，同会话内仍按创建时间；
+  新用例 `ExecuteNextClaimsWithAFairerConversationAheadOfAnOlderBusyOne` 证明 A 有两条、B 有一条时先跑 B，
+  三条任务最终都完成。
+- `/api/operations/status` 增加 `agentQueue`（待处理、进行中、最长等待秒数、最忙会话任务数），
+  运行状态的「AI 任务执行」卡片直接显示。真实环境实测：4 条任务分属 4 个会话 →
+  `{queued:2, running:2, oldestQueuedSeconds:2, busiestConversationTasks:1}`，卡片显示
+  “队列 2 待处理 · 2 进行中 · 最长等待 29 秒”；排空后回到 `queued:0`。
+
+## 更正一：不是并发引起的失败
+
+我先前在对话里说“并发 4 个任务全挂，说明并发有缺陷”。**这个结论是错的**：随后单个任务同样在约 80 秒失败，
+本机 `network.json` 指向的代理端口 7890 当时没有在监听，直连也超时。故障是模型出口不通，与并发无关。
+上面的公平性改动本身仍然有效（有用例），但它既不是这次故障的原因，也不是它的修复。
+
+## 更正二：真正值得修的是“失败没有原因”
+
+真实失败在界面上只剩 `CODEX_CLI_EXIT_NONZERO`，谁也不知道该做什么。查下来有两处缺陷：
+
+1. `SystemCodexCliProcessRunnerV1` 只要 stderr 超过 8 KB 就**放弃分类**直接返回 Unknown，
+   而 Codex 的重试噪声很容易超过 8 KB。现在保留有界头部 4 KB + 有界滚动尾部 4 KB，两端都参与识别；
+   原始文本仍然只在固定缓冲里，用完 `ZeroMemory`，不返回、不写日志、不落库（用例继续断言
+   `SYNTHETIC_SECRET_MARKER` 不会出现在结果里）。
+2. `CodexCliStderrClassifierV1` 的网络短语表里没有真实错误的写法。用一个**不含任何聊天内容**的自定义
+   提示复现同样的失败后统计，实际文本是 `error sending request for url (...)` 与
+   `failed to refresh available models: request timed out`，而表里只有 `connection refused`、`etimedout` 等；
+   补入这两条精确短语（不加宽泛的 `timed out`，避免误判）。
+
+另加两处“让人自己发现”的入口：
+
+- 启动器注入代理后立刻探测该端口是否可连（700ms），连不上就在启动窗口写明“AI 任务大概率会以
+  `CODEX_CLI_NETWORK_FAILED` 失败”，并给出两条出路（开代理 / 删 network.json 直连）。
+- `wwwroot/v8/api.js` 补 `CODEX_CLI_NETWORK_FAILED` / `CODEX_CLI_AUTH_REQUIRED` / `RUNTIME_TIMEOUT` 的中文说明。
+
+### 真实端到端验证
+
+同一条失败路径，改动前后的错误码：
+
+| 时机 | 结果 |
+| --- | --- |
+| 改动前（代理端口未监听） | `Failed / CODEX_CLI_EXIT_NONZERO / 80.3s`，界面只说“请求失败” |
+| 改动后（同样条件下重跑一次 Quick） | `Failed / CODEX_CLI_NETWORK_FAILED / 80.4s`，界面显示“AI 连不上模型服务：本机代理或网络出口没有就绪……” |
+| 启动窗口 | 出现“警告：本机代理 127.0.0.1:7890 现在连不上……” |
+
+回归：.NET **271 项**通过（PlatformTests 46→50，含头/尾识别、长输出不误判、两条新短语），reader 31 项通过。
+代理恢复后的成功路径沿用今天早些时候的实测（Quick 19.4s、Balanced 28.3s），本轮没有再次产生成功的模型调用，
+因此“`NETWORK_FAILED` 之后恢复出口即正常”这一步属于**推断，未实测**。
+
+
