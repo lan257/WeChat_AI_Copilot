@@ -150,13 +150,18 @@ public sealed class CodexCliAgentRuntime : IAgentRuntime
             return AgentRuntimeResultV1.Failed(RuntimeId, "CONTEXT_REVISION_CHANGED");
         }
 
+        // Quick is the "prefer speed" profile and never spends a second model call, not even when
+        // review-stage Skills are enabled; otherwise enabling a review Skill silently cancels the
+        // latency guarantee the depth label advertises.
         var reviewRules=task.TrustedSkillSnapshot?.WorkflowInstructions.GetValueOrDefault("review") ?? [];
-        if (task.ExecutionProfileId == AgentExecutionProfileIdV1.Max || reviewRules.Count > 0)
+        var reviewRuns = task.ExecutionProfileId != AgentExecutionProfileIdV1.Quick
+            && (task.ExecutionProfileId == AgentExecutionProfileIdV1.Max || reviewRules.Count > 0);
+        if (reviewRuns)
         {
             if(request.RecordSkillStage is not null)await request.RecordSkillStage("review",cancellationToken);
             AgentTaskTelemetryV6.Current.Value?.SetPhase("Reviewing");
             var reviewPrompt = BuildPrompt(request, scopeBoundContext, suggestionToolResults, allowSearch: false, allowEvidence: false)
-                + "\n\nMax 档独立复核：检查以下草稿是否与当前消息和历史检索证据冲突，是否包含无依据事实、把猜测写成事实、越界推断对方心理或过度引用私聊原文。保留自然表达；有问题就修订。仍须严格返回恰好三条互不重复的可直接复制回复，仅返回 schema JSON。草稿：\n"
+                + "\n\n独立复核：检查以下草稿是否与当前消息和历史检索证据冲突，是否包含无依据事实、把猜测写成事实、越界推断对方心理或过度引用私聊原文。保留自然表达；有问题就修订。仍须严格返回恰好三条互不重复的可直接复制回复，仅返回 schema JSON。草稿：\n"
                 + JsonSerializer.Serialize(new { suggestions = result.Suggestions.Select(item => item.Text).ToArray() }, PromptJsonOptions);
             if(budget.MaxContextCharacters is {} reviewMaximum&&reviewPrompt.Length>reviewMaximum)
                 return AgentRuntimeResultV1.Failed(RuntimeId,"AGENT_CONTEXT_BUDGET_EXCEEDED");

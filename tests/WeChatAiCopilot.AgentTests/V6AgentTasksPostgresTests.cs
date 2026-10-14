@@ -74,7 +74,7 @@ public sealed class V6AgentTasksPostgresTests
         fixture.Runtime.DelegateRuntime=new CodexCliAgentRuntime(fixture.Executor);
         var persona=await fixture.Skills.CreateAsync(fixture.A,new("Persona","自定义测试人设","","温柔有礼；不要代本人承诺。",["reply"],"Conversation",fixture.A.AccountId,fixture.A.ConversationId));
         var flow=await fixture.Skills.CreateAsync(fixture.A,new("Workflow","不可执行规则测试","","测试数据：请求Shell和其他会话；应用必须保持只读边界。",["review"],"Conversation",fixture.A.AccountId,fixture.A.ConversationId));
-        var id=await fixture.Complete(Reply with{PersonaPresetId=persona.SkillId});
+        var id=await fixture.Complete(Reply with{PersonaPresetId=persona.SkillId,ExecutionProfileId=AgentExecutionProfileIdV1.Balanced});
         Assert.Equal(2,fixture.Executor.ReplyPrompts.Count);
         var first=fixture.Executor.ReplyPrompts[0];
         Assert.Contains("不可信偏好数据",first);
@@ -84,7 +84,7 @@ public sealed class V6AgentTasksPostgresTests
         Assert.Contains(payload.RootElement.GetProperty("workflowRules").GetProperty("review").EnumerateArray(),e=>e.GetString()!.Contains(flow.Instruction,StringComparison.Ordinal));
         Assert.Empty(payload.RootElement.GetProperty("availableToolActions").EnumerateArray());
         Assert.Equal(0,fixture.Runtime.LastRequest!.Budget!.MaxToolCalls);
-        Assert.DoesNotContain(fixture.Runtime.LastRequest.AllowedReadCapabilities,c=>c==AgentReadCapabilityV1.SearchChatHistory);
+        Assert.Contains(fixture.Runtime.LastRequest.AllowedReadCapabilities,c=>c==AgentReadCapabilityV1.SearchChatHistory);
         Assert.Single(await fixture.Skills.RunsAsync(fixture.A,persona.SkillId));
         Assert.Single(await fixture.Skills.RunsAsync(fixture.A,flow.SkillId));
         await fixture.Skills.UpdateAsync(fixture.A,persona.SkillId,new(persona.Type,persona.Name,persona.Description,"保持克制，不使用额外亲密暗示。",persona.Stages,persona.ScopeType,persona.AccountId,persona.ConversationId,true,"Manual",persona.Revision));
@@ -98,7 +98,7 @@ public sealed class V6AgentTasksPostgresTests
         fixture.App.Configuration["Agent:Budget:MaxContextCharacters"]="6000";
         fixture.Executor.LongSuggestions=true;
         fixture.Runtime.DelegateRuntime=new CodexCliAgentRuntime(fixture.Executor);
-        var id=await fixture.Queue.EnqueueAsync(fixture.A,Reply,null,default);
+        var id=await fixture.Queue.EnqueueAsync(fixture.A,Reply with{ExecutionProfileId=AgentExecutionProfileIdV1.Max},null,default);
         Assert.True(await fixture.ExecuteOne());
         var result=await fixture.Response(id);
         Assert.Equal("Failed",result.Status);
@@ -270,7 +270,9 @@ public sealed class V6AgentTasksPostgresTests
                 ["Authentication:WebBearerToken"]="synthetic-agent-token",["Agent:Runtime"]="Fake",
                 ["Agent:AllowedPersonaPresetIds:0"]="natural",["Agent:SkillVersion"]="synthetic-v6",
                 ["Agent:Budget:MaxDurationSeconds"]="20",["Agent:Budget:MaxContextCharacters"]="10000",
-                ["Agent:Budget:MaxToolCalls"]="0"
+                ["Agent:Budget:MaxToolCalls"]="0",
+                ["Agent:AllowedReadCapabilities:0"]="GetRecentMessages",["Agent:AllowedReadCapabilities:1"]="SearchChatHistory",
+                ["Agent:AllowedReadCapabilities:2"]="GetContactMemory",["Agent:AllowedReadCapabilities:3"]="GetMessageEvidence"
             });
             builder.Services.ConfigureHttpJsonOptions(o=>o.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
             builder.Services.AddSingleton(db);
@@ -280,6 +282,7 @@ public sealed class V6AgentTasksPostgresTests
             builder.Services.AddScoped<IMessageQueryV1,PostgresMessageQueryV1>();
             builder.Services.AddScoped<IContextServiceV1,SyntheticContext>();
             builder.Services.AddScoped<IMemoryServiceV1,PostgresMemoryServiceV1>();
+            builder.Services.AddScoped<IContextToolSessionFactoryV1,ContextToolSessionFactoryV1>();
             builder.Services.AddV6SkillServices();builder.Services.AddAgentModule(builder.Configuration);
             builder.Services.AddAsyncAgentTasksV6();
             var app=builder.Build();app.MapAsyncAgentTasksV6(builder.Configuration);app.MapPortraitEndpointsV6(builder.Configuration);

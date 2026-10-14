@@ -200,7 +200,10 @@ export function renderSuggestions() {
   $('progressText').textContent=busy?phaseLabel(s.suggestionTask):'正在准备上下文…';
   $('suggestStatus').textContent=busy?'正在回答':s.suggestionError?'请求失败':s.stale?'上下文或设置已变化 · 需要更新':batch?'可复制':'尚未提问';
   $('suggestStatus').classList.toggle('stale',Boolean(s.stale||s.suggestionError));
-  $('suggestInfo').innerHTML=`${escape(levelDetail[s.level])} · ${escape(persona?.name||'请选择')}人设 · ${reviewSkills().length} 项复核 Skill${s.stale?' · <em>这批建议基于较早的聊天，建议重新生成</em>':' · 点击任一建议即可复制'}`;
+  // The count has to follow what will actually run: Quick never spends the second model call, so
+  // showing enabled review Skills as if they applied would advertise a cost that is not happening.
+  const reviewCount=s.level==='Quick'?0:reviewSkills().length;
+  $('suggestInfo').innerHTML=`${escape(levelDetail[s.level])} · ${escape(persona?.name||'请选择')}人设 · ${reviewCount} 项复核 Skill${s.stale?' · <em>这批建议基于较早的聊天，建议重新生成</em>':' · 点击任一建议即可复制'}`;
   $('aiQuickResult').classList.toggle('hidden',!batch&&!busy);
   const suggestions=batch?.suggestions;
   $('suggestions').innerHTML=suggestions?.length===3?suggestions.map((q,i)=>`<button class="suggest-card" data-action="copy" data-idx="${i}"><span class="suggest-label">${i+1} · 点击复制</span><span class="suggest-text">${escape(q.text)}</span><span class="copy-mark">${svg('copy')}</span></button>`).join(''):placeholder(s.suggestionError||'先选择一种人设，然后点击“生成三条回复最新消息的参考”。');

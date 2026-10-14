@@ -168,8 +168,60 @@ public sealed class CodexCliAgentRuntimeTests
 
             Assert.Equal(AgentRunStatusV1.Completed, result.Status);
             Assert.Equal(2, runner.Requests.Count);
-            Assert.Contains("Max 档独立复核", runner.Requests[1].StandardInput);
+            Assert.Contains("独立复核", runner.Requests[1].StandardInput);
+            Assert.DoesNotContain("Max 档独立复核", runner.Requests[1].StandardInput);
             Assert.Equal(new[] { "reviewed one", "reviewed two", "reviewed three" }, result.Suggestions.Select(item => item.Text));
+        }
+        finally
+        {
+            if (Directory.Exists(testDirectory)) Directory.Delete(testDirectory, recursive: true);
+        }
+    }
+
+    private static WeChatAiCopilot.Api.Modules.Skills.SkillResolution SnapshotWithReviewRule() => new(
+        "persona-1",
+        "自然",
+        "像平常说话一样回复。",
+        1,
+        new Dictionary<string, IReadOnlyList<string>> { ["review"] = ["不得出现没有依据的承诺"] },
+        new Dictionary<string, long> { ["review"] = 1 },
+        "digest-r1");
+
+    [Theory]
+    [InlineData(AgentExecutionProfileIdV1.Quick, 1)]
+    [InlineData(AgentExecutionProfileIdV1.Balanced, 2)]
+    public async Task ExecuteAsync_ReviewStageSkillsDoNotAddASecondCallToQuick(AgentExecutionProfileIdV1 profile, int expectedCalls)
+    {
+        var session = new FakeContextToolSession([CreateToolContext()]);
+        var runner = new FakeProcessRunner(
+        [
+            """{"suggestions":["draft one","draft two","draft three"]}""",
+            """{"suggestions":["reviewed one","reviewed two","reviewed three"]}"""
+        ]);
+        var (runtime, _, testDirectory) = CreateRuntime(runner);
+        try
+        {
+            var baseline = CreateReplyRequest();
+            var request = baseline with
+            {
+                Task = baseline.Task! with
+                {
+                    ExecutionProfileId = profile,
+                    TrustedSkillSnapshot = SnapshotWithReviewRule()
+                },
+                ContextToolSession = session,
+                AllowedReadCapabilities = [AgentReadCapabilityV1.SearchChatHistory],
+                Budget = baseline.Budget! with { MaxToolCalls = 4 }
+            };
+
+            var result = await runtime.ExecuteAsync(request, CancellationToken.None);
+
+            Assert.Equal(AgentRunStatusV1.Completed, result.Status);
+            Assert.Equal(expectedCalls, runner.Requests.Count);
+            var expected = expectedCalls == 1
+                ? new[] { "draft one", "draft two", "draft three" }
+                : new[] { "reviewed one", "reviewed two", "reviewed three" };
+            Assert.Equal(expected, result.Suggestions.Select(item => item.Text));
         }
         finally
         {
