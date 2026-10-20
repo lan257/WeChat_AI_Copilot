@@ -1,5 +1,7 @@
 # 知间（WeChat AI Copilot）V6 前端严格实现与变更管控指导书
 
+> 2026-10-20 实施更新：本 V6 历史指导书中的人工身份校准步骤已被《WeChat_Automatic_Sender_Identity_Implementation_Spec.md》取代。当前产品按 wxid 自动区分本人/联系人，并保留无法解析的 `Unknown`。
+
 > **文档用途**：交给开发 Agent、前端开发者、后端开发者和集成负责人执行的**产品实现约束与验收依据**。  
 > **状态**：实施指导草案；V6 作为当前唯一候选产品原型，最终冻结须由产品所有者确认。  
 > **基准原型**：`WeChat_AI_Copilot_Product_Prototype_V6.html`  

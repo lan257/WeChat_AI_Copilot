@@ -460,7 +460,7 @@ public sealed class ConsolidationMessageCollectorV1
         var eligible = messages
             .Where(message => message.MessageType == "Text"
                 && (message.Direction is MessageDirectionV1.Incoming or MessageDirectionV1.Outgoing)
-                && message.DirectionEvidence == DirectionEvidenceV1.UserConfirmed)
+                && message.DirectionEvidence == DirectionEvidenceV1.SourceConfirmed)
             .Select(message => new MemoryConsolidationInputMessageV1(
                 message.MessageId,
                 MemoryConsolidationWindowV1.NormalizeText(message.Text ?? string.Empty),

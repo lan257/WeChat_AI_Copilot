@@ -8,7 +8,7 @@ import {hydrateIcons} from './icons.js';
 const name=()=>contact()?.displayName||'当前联系人';
 // V8 settings navigation: four scenario roots, each opening a hub of sub-pages. There is no duplicate conversation page.
 const settingGroups={
-  contacts:['contacts','portrait','listening','history','identity','memories'],
+  contacts:['contacts','portrait','listening','history','memories'],
   'ai-settings':['ai-settings','agent','self'],
   connections:['connections','setup'],
   'app-status':['app-status','preferences','health']
@@ -54,7 +54,6 @@ function contactsRoot() {
     ['listening','后台监听','多联系人监听目标与开关'],
     ['memories','记忆与证据','编辑备注并查看证据来源'],
     ['history','历史补录','按范围发起历史读取和去重'],
-    ['identity','身份校准','确认本人和联系人消息方向']
   ]);
 }
 function aiSettingsRoot() {
@@ -90,8 +89,8 @@ function portrait() {
   const section=(title,items,empty)=>`<div class="portrait-section"><h4>${title}</h4>${items?.length?items.map(item=>`<div class="portrait-item"><span class="portrait-bullet"></span><span>${typeof item==='object'?`<span class="portrait-mark ${item.type==='Inference'?'is-warn':''}">${item.type==='Inference'?'AI 推测':'聊天事实'}</span> `:''}${escape(claimText(item))}</span></div>`).join(''):`<p class="portrait-empty">${empty}</p>`}</div>`;
   const sections=p?.sections||{};
   return intro(`${name()} · 人物画像`,'一眼了解当前联系人。画像是一份有证据边界的动态摘要，不是记忆原始列表；聊天事实、用户备注与 AI 推测必须分开。')+
-  `<div class="portrait-hero"><div class="avatar">${escape(name().slice(0,1))}</div><div><strong>${escape(name())}</strong><p>当前账号 · ${escape(account()?.displayName||'微信账号')}</p><span class="portrait-mark ${verified?'':'is-warn'}">${verified?'身份方向已确认':'身份未确认 · 限制画像生成'}</span></div></div>
-  <div class="portrait-summary"><div class="portrait-kicker">当前关系背景${p?.status==='Stale'?' · 已过期，需更新':''}</div><p>${escape(s.portraitError||(Array.isArray(sections.overview)?sections.overview.map(item=>`${item.type==='Inference'?'[AI 推测]':'[聊天事实]'} ${claimText(item)}`).join('\n'):sections.overview)||'暂无可靠资料。可补充核实后的备注，或根据授权聊天更新画像。')}</p><div class="portrait-source">来源范围：${p?.evidence?.length||0} 条授权证据 · 校准版本 ${p?.calibrationVersion||s.snapshot?.calibrationVersion||0} · 画像版本 ${p?.revision||0}</div></div>
+  `<div class="portrait-hero"><div class="avatar">${escape(name().slice(0,1))}</div><div><strong>${escape(name())}</strong><p>当前账号 · ${escape(account()?.displayName||'微信账号')}</p><span class="portrait-mark ${verified?'':'is-warn'}">${verified?'账号身份已识别':'账号身份未识别 · 暂停方向依赖功能'}</span></div></div>
+  <div class="portrait-summary"><div class="portrait-kicker">当前关系背景${p?.status==='Stale'?' · 已过期，需更新':''}</div><p>${escape(s.portraitError||(Array.isArray(sections.overview)?sections.overview.map(item=>`${item.type==='Inference'?'[AI 推测]':'[聊天事实]'} ${claimText(item)}`).join('\n'):sections.overview)||'暂无可靠资料。可补充核实后的备注，或根据授权聊天更新画像。')}</p><div class="portrait-source">来源范围：${p?.evidence?.length||0} 条授权证据 · 方向版本 ${p?.calibrationVersion||s.snapshot?.calibrationVersion||0} · 画像版本 ${p?.revision||0}</div></div>
   <div class="portrait-grid">${section('共同话题',sections.topics,'目前尚无可确定的共同话题')}${section('近期计划',sections.plans,'暂无已记录的近期计划')}${section('表达与互动偏好',sections.preferences,'没有可靠偏好证据，不进行性格推断')}</div>
   <div class="notice warn"><strong>推断边界</strong><div style="margin-top:5px">${escape((Array.isArray(sections.boundaries)?sections.boundaries.map(claimText).join('；'):sections.boundaries)||'证据不足，不应推断对方性格或真实意图。')} 未确认的内容不能进入强事实记忆。</div></div>
   <div class="group-heading">持续维护与纠错</div>`+
@@ -112,15 +111,8 @@ function memories() {
   const s=current();
   return intro(`${name()} · 记忆证据`,'这里管理支持画像的原始线索、人工备注和可追溯证据。点击“人物画像”查看上层摘要。')+
   `<div class="notice">记忆只属于当前账号与「${escape(name())}」。换联系人后不会带入其他人的背景。</div><div class="group-heading">当前记忆 · ${s.memories.length} 条</div><div class="memory-cards">`+
-  (s.memories.length?s.memories.map(m=>`<div class="memory-card"><div class="meta"><span>${m.origin==='UserEntered'?'用户备注':'聊天证据提取'} · ${escape(m.status)} · v${m.version}</span>${m.origin==='UserEntered'?`<button data-action="delete-memory" data-id="${escape(m.memoryId)}">删除</button>`:''}</div><p>${escape(m.text)}</p>${m.sourceMessageIds?.length?`<button class="evidence" style="width:100%;text-align:left" data-action="memory-evidence" data-id="${escape(m.memoryId)}">查看 ${m.sourceMessageIds.length} 条授权聊天证据 · 校准 v${m.calibrationVersion||0}</button>`:`<div class="evidence">用户手动录入 · 不作为聊天事实 · ${escape(time(m.updatedAt))}</div>`}</div>`).join(''):placeholder('暂无人物记忆。确认身份后可以按用户授权沉淀聊天背景。'))+
+  (s.memories.length?s.memories.map(m=>`<div class="memory-card"><div class="meta"><span>${m.origin==='UserEntered'?'用户备注':'聊天证据提取'} · ${escape(m.status)} · v${m.version}</span>${m.origin==='UserEntered'?`<button data-action="delete-memory" data-id="${escape(m.memoryId)}">删除</button>`:''}</div><p>${escape(m.text)}</p>${m.sourceMessageIds?.length?`<button class="evidence" style="width:100%;text-align:left" data-action="memory-evidence" data-id="${escape(m.memoryId)}">查看 ${m.sourceMessageIds.length} 条授权聊天证据 · 方向版本 v${m.calibrationVersion||0}</button>`:`<div class="evidence">用户手动录入 · 不作为聊天事实 · ${escape(time(m.updatedAt))}</div>`}</div>`).join(''):placeholder('暂无人物记忆。解析出真实发送者后会按用户授权沉淀聊天背景。'))+
   `</div>${(s.selectedEvidence||s.portrait?.evidence)?.length?`<div class="group-heading">当前引用的聊天证据</div>${(s.selectedEvidence||s.portrait.evidence).map(e=>`<div class="memory-card"><p>${escape(e.excerpt||`[${e.messageType||'非文本消息'}]`)}</p><div class="evidence">授权聊天 · ${escape(time(e.occurredAt||e.occurredAtUtc))}</div></div>`).join('')}`:''}<div class="group-heading">补充一条个人备注</div><textarea class="form-field" id="newMemory" rows="3" placeholder="例如：对方不喜欢临时改变约好的时间……" style="resize:vertical"></textarea><div style="display:flex;justify-content:flex-end;margin-top:9px"><button class="primary" data-action="add-memory">添加备注</button></div>`;
-}
-function identity() {
-  const s=current(),scopes=s.perspective?.scopes||[];
-  if(!scopes.length)return intro(`${name()} · 发送者身份校准`,'身份校准按具体会话生效，不以 sender ID 的大小作全局规则。')+placeholder('暂无可比较的两个发送者身份。请先读取真实消息。');
-  return intro(`${name()} · 发送者身份校准`,'只有确认“谁是本人、谁是联系人”，AI 的上下文和记忆才有可靠方向。身份校准按具体会话生效，不以 sender ID 的大小作全局规则。')+
-  (scopes.length>1?`<div class="notice">这个会话在本机微信库里跨了 ${scopes.length} 个数据范围（不同分片、消息表或实时新增的记录），所以会看到 ${scopes.length} 个校准版本。每个范围都要各确认一次；全部确认后才会解锁人物画像与记忆沉淀。</div>`:'')+
-  scopes.map((p,i)=>`<div class="notice ${p.perspectiveState!=='Confirmed'?'warn':''}">${p.perspectiveState==='Confirmed'?'当前状态：已校准。修改后相关消息和记忆按版本重新计算。':'当前状态：待人工核对。默认气泡方向不等于可靠事实。'}</div><div class="group-heading">当前身份方向 · 校准版本 ${p.calibrationVersion}</div><div class="setting-card" style="justify-content:space-around"><div style="text-align:center"><div class="avatar" style="--av:#e1f2e8;--avink:#168568;margin:auto">我</div><p style="font-size:11px;color:#82948c">当前本人方向</p></div><div style="font-size:25px;color:#96c5b4">⇄</div><div style="text-align:center"><div class="avatar" style="margin:auto">${escape(name().slice(0,1))}</div><p style="font-size:11px;color:#82948c">当前联系人方向</p></div></div><p class="intro" style="margin:12px 0">当前预览正确时确认当前方向；归属反了时互转身份。不会修改原始微信记录。</p><div style="display:flex;gap:9px">${button('confirm-identity','确认当前方向',`data-index="${i}" ${p.canConfirm?'':'disabled'}`,'primary')}${button('swap-identity','互转身份',`data-index="${i}" ${p.canConfirm?'':'disabled'}`,'primary')}</div>`).join('')||placeholder('暂无可比较的两个发送者身份。请先读取真实消息。');
 }
 function history() {
   const j=current().historyJob,busy=j&&['Pending','Queued','Running','CancelRequested'].includes(j.status);
@@ -172,7 +164,7 @@ export function renderDrawer() {
   // Preserve in-progress field editing while background message/task events arrive.
   if($('drawerContent').contains(active)&&['INPUT','TEXTAREA','SELECT'].includes(active.tagName))return;
   const roots={'contacts':contactsRoot,'ai-settings':aiSettingsRoot,connections:connectionsRoot,'app-status':appStatusRoot};
-  const pages={portrait,listening,memories,identity,history,agent:renderSkills,self:expression,setup,preferences,health};
+  const pages={portrait,listening,memories,history,agent:renderSkills,self:expression,setup,preferences,health};
   const page=pages[store.drawerTab]||roots[store.drawerTab]||contactsRoot;
   const back=roots[store.drawerTab]?'':`<button class="drawer-back" data-action="tab" data-tab="${groupFor(store.drawerTab)}">← 返回${groupNames[groupFor(store.drawerTab)]}</button>`;
   $('drawerContent').innerHTML=back+page();hydrateIcons($('drawerContent'));
@@ -185,12 +177,6 @@ async function toggleListen(id) {
   const ids=rows.filter(c=>c.isMonitored&&c!==row).map(c=>c.conversationId);if(!row.isMonitored)ids.push(id);
   await request(`/api/accounts/${encodeURIComponent(store.selectedAccount)}/reader-targets`,{method:'PUT',scoped:false,body:{expectedVersion:row.targetVersion||0,conversationIds:ids}});
   await refreshDirectory();await loadConversation({incremental:true});notify('监听目标已保存；页面以 Reader 实际状态显示是否生效。');
-}
-async function confirmIdentity(index,swap) {
-  const s=current(),p=s.perspective?.scopes?.[index];if(!p?.canConfirm)return;
-  if(!window.confirm(`${swap?'互换':'确认'}当前会话的本人/联系人方向？相关消息和记忆将按新校准版本核验。`))return;
-  await request('/api/conversations/current/sender-perspective',{method:'PUT',target:s,body:{accountId:s.accountId,conversationId:s.conversationId,identityNamespace:p.identityNamespace,accountSelfRawSenderId:swap?p.contactRawSenderId:p.effectiveSelfRawSenderId,expectedCalibrationVersion:p.calibrationVersion}});
-  s.stale=Boolean(s.suggestions);await loadConversation();notify('身份校准已保存，消息方向已重新读取。');
 }
 async function pollHistory(s) {
   while(s.historyJob&&['Pending','Queued','Running','CancelRequested'].includes(s.historyJob.status)){
@@ -205,7 +191,6 @@ export async function drawerAction(el) {
   }
   try {
     if(action==='toggle-listen')await toggleListen(el.dataset.id);
-    if(action==='confirm-identity'||action==='swap-identity')await confirmIdentity(Number(el.dataset.index),action==='swap-identity');
     if(action==='add-memory'||action==='portrait-correct'){
       const text=$(action==='add-memory'?'newMemory':'portraitCorrection')?.value.trim();if(!text)throw new Error('请先填写要保存的人工备注。');
       await request('/api/conversations/current/memory',{method:'POST',target:s,body:{subjectType:'Contact',text,category:action==='portrait-correct'?'Correction':'Note',sourceMessageIds:[]}});

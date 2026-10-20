@@ -192,6 +192,7 @@ public sealed class ContractValidatorV1Tests
             LocalId = "local-1",
             SortSeq = "sort-1",
             ServerId = "server-1",
+            Shard = "message_0.db",
             ShardFingerprint = "shard-a",
             MessageTable = "MSG_0"
         },

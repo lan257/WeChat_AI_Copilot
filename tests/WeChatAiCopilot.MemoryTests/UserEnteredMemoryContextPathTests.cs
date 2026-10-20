@@ -206,7 +206,7 @@ public sealed class UserEnteredMemoryContextPathTests
             MessageId = id,
             Text = $"message {index + 1}",
             Direction = MessageDirectionV1.Incoming,
-            DirectionEvidence = DirectionEvidenceV1.UserConfirmed
+            DirectionEvidence = DirectionEvidenceV1.SourceConfirmed
         }).ToArray()
     };
 

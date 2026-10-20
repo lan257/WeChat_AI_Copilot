@@ -43,6 +43,7 @@ public sealed record SourceIdentityV1
     public string? LocalId { get; init; }
     public string? SortSeq { get; init; }
     public string? ServerId { get; init; }
+    public string? Shard { get; init; }
     public string? ShardFingerprint { get; init; }
     public string? MessageTable { get; init; }
 }
@@ -53,12 +54,14 @@ public sealed record RawMessageEventV1
     public string? Provider { get; init; }
     public SourceKindV1 SourceKind { get; init; } = SourceKindV1.Realtime;
     public string? AccountExternalId { get; init; }
+    public string? AccountWxid { get; init; }
     public string? ConversationExternalId { get; init; }
     public string? ConversationType { get; init; }
     public string? MessageType { get; init; }
     public string? Text { get; init; }
     public DateTimeOffset? SourceOccurredAt { get; init; }
     public string? RawSenderId { get; init; }
+    public string? SenderWxid { get; init; }
     public string? IdentityNamespace { get; init; }
     public SourceIdentityV1? SourceIdentity { get; init; }
     public string? ExternalMessageId { get; init; }

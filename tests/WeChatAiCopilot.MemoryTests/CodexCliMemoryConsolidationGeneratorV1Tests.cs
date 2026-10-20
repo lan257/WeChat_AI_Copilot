@@ -189,7 +189,7 @@ public sealed class CodexCliMemoryConsolidationGeneratorV1Tests
                     Text = "synthetic incoming conversation fact",
                     MessageType = "Text",
                     Direction = MessageDirectionV1.Incoming,
-                    DirectionEvidence = DirectionEvidenceV1.UserConfirmed
+                    DirectionEvidence = DirectionEvidenceV1.SourceConfirmed
                 }
             ]
         });

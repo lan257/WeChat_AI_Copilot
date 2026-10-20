@@ -257,7 +257,7 @@ public sealed class AgentContractsAndFakeRuntimeTests
         Text = text,
         OccurredAtUtc = DateTimeOffset.UtcNow,
         Direction = MessageDirectionV1.Incoming,
-        DirectionEvidence = DirectionEvidenceV1.UserConfirmed
+        DirectionEvidence = DirectionEvidenceV1.SourceConfirmed
     };
 
     private AgentConsultationThreadV1 CreateBoundThread() => new()

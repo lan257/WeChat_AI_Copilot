@@ -21,7 +21,7 @@ public sealed class PostgresReaderIngestionMigrationTests
     private const string ConnectionStringEnvironmentVariable = "WECHAT_AI_COPILOT_M2_TEST_POSTGRES";
 
     [M2PostgresFact]
-    public async Task IngestionPreservesSourceEvidenceAndRejectsServerIdAndShardCollisions()
+    public async Task IngestionPersistsAutomaticDirectionAndKeepsShardLocalIdsDistinct()
     {
         var connectionString = Environment.GetEnvironmentVariable(ConnectionStringEnvironmentVariable)
             ?? throw new InvalidOperationException($"Set {ConnectionStringEnvironmentVariable} to a disposable PostgreSQL test database.");
@@ -80,18 +80,21 @@ public sealed class PostgresReaderIngestionMigrationTests
                 Provider = "local-wechat",
                 SourceKind = SourceKindV1.Realtime,
                 AccountExternalId = accountExternalId,
+                AccountWxid = "wxid_test_account",
                 ConversationExternalId = conversationExternalId,
                 ConversationType = "Direct",
                 MessageType = "Text",
                 Text = "first source-identity ingest",
                 SourceOccurredAt = DateTimeOffset.UtcNow,
                 RawSenderId = "1",
+                SenderWxid = "wxid_test_account",
                 IdentityNamespace = identityNamespace,
                 SourceIdentity = new SourceIdentityV1
                 {
                     LocalId = "local-message-1",
                     SortSeq = "1",
                     ServerId = "server-message-1",
+                    Shard = "message_0.db",
                     ShardFingerprint = "test-shard",
                     MessageTable = "Message_test"
                 }
@@ -135,13 +138,13 @@ public sealed class PostgresReaderIngestionMigrationTests
                 SourceIdentity = message.SourceIdentity! with
                 {
                     ServerId = "server-message-other-shard",
+                    Shard = "message_1.db",
                     ShardFingerprint = "other-test-shard"
                 }
             };
-            var otherShardConflictReceipt = await PostMessageAsync(client, requestJsonOptions, otherShardConflict);
-            Assert.Equal(MatchStatusV1.NeedsReview, otherShardConflictReceipt.MatchStatus);
-            Assert.Equal("EXTERNAL_MESSAGE_ID_SCOPE_COLLISION", otherShardConflictReceipt.ReviewCode);
-            Assert.Null(otherShardConflictReceipt.MessageId);
+            var otherShardReceipt = await PostMessageAsync(client, requestJsonOptions, otherShardConflict);
+            Assert.Equal(MatchStatusV1.Created, otherShardReceipt.MatchStatus);
+            Assert.NotEqual(firstReceipt.MessageId, otherShardReceipt.MessageId);
 
             var sameTextDifferentSource = message with
             {
@@ -157,18 +160,32 @@ public sealed class PostgresReaderIngestionMigrationTests
             Assert.NotNull(distinctSourceReceipt.MessageId);
             Assert.NotEqual(firstReceipt.MessageId, distinctSourceReceipt.MessageId);
 
+            var unknownIdentityReceipt = await PostMessageAsync(client, requestJsonOptions, message with
+            {
+                AccountWxid = null,
+                SenderWxid = null,
+                SourceIdentity = message.SourceIdentity! with { LocalId = "local-message-3", SortSeq = "3" }
+            });
+            Assert.Equal(MatchStatusV1.Created, unknownIdentityReceipt.MatchStatus);
+
+            using var accountConflictResponse = await client.PostAsync(
+                "/api/reader/messages",
+                JsonContent.Create(message with
+                {
+                    AccountWxid = "wxid_different_account",
+                    SourceIdentity = message.SourceIdentity! with { LocalId = "local-message-4", SortSeq = "4" }
+                }, options: requestJsonOptions));
+            Assert.Equal(System.Net.HttpStatusCode.Conflict, accountConflictResponse.StatusCode);
+            Assert.Contains("READER_ACCOUNT_WXID_CONFLICT", await accountConflictResponse.Content.ReadAsStringAsync());
+
             await AssertSinglePersistedMessageAsync(
                 dataSource,
                 accountExternalId,
                 conversationExternalId,
-                identityNamespace,
                 firstReceipt.MessageId!.Value,
-                distinctSourceReceipt.MessageId!.Value);
-            await AssertResolvedEqualSenderIdsAreRejectedAsync(
-                dataSource,
-                accountExternalId,
-                conversationExternalId,
-                identityNamespace);
+                otherShardReceipt.MessageId!.Value,
+                distinctSourceReceipt.MessageId!.Value,
+                unknownIdentityReceipt.MessageId!.Value);
         }
         finally
         {
@@ -194,13 +211,15 @@ public sealed class PostgresReaderIngestionMigrationTests
         NpgsqlDataSource dataSource,
         string accountExternalId,
         string conversationExternalId,
-        string identityNamespace,
         Guid expectedMessageId,
-        Guid expectedDifferentSourceMessageId)
+        Guid expectedOtherShardMessageId,
+        Guid expectedDifferentSourceMessageId,
+        Guid expectedUnknownMessageId)
     {
         const string sql = """
             SELECT account.id,
                    conversation.id,
+                   account.account_wxid,
                    (SELECT count(*) FROM copilot.chat_messages AS message
                     WHERE message.account_id = account.id AND message.conversation_id = conversation.id),
                    (SELECT count(*) FROM copilot.message_sources AS source
@@ -208,40 +227,29 @@ public sealed class PostgresReaderIngestionMigrationTests
                    (SELECT count(*) FROM copilot.message_sources AS source
                     WHERE source.account_id = account.id AND source.conversation_id = conversation.id
                       AND source.match_status = 'NeedsReview'),
-                   calibration.perspective_state,
-                   calibration.calibration_version,
-                   calibration.account_self_raw_sender_id,
-                   calibration.contact_raw_sender_id
+                   (SELECT count(*) FROM copilot.sender_calibrations AS calibration
+                    WHERE calibration.account_id = account.id AND calibration.conversation_id = conversation.id)
             FROM copilot.chat_accounts AS account
             JOIN copilot.conversations AS conversation ON conversation.account_id = account.id
-            JOIN copilot.sender_calibrations AS calibration
-              ON calibration.account_id = account.id
-             AND calibration.conversation_id = conversation.id
             WHERE account.provider = 'local-wechat'
               AND account.external_account_id = @account_external_id
-              AND conversation.external_conversation_id = @conversation_external_id
-              AND calibration.identity_namespace = @identity_namespace
-              AND calibration.message_table = 'Message_test'
-              AND calibration.shard_fingerprint = 'test-shard';
+              AND conversation.external_conversation_id = @conversation_external_id;
             """;
         await using var connection = await dataSource.OpenConnectionAsync();
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.AddWithValue("account_external_id", accountExternalId);
         command.Parameters.AddWithValue("conversation_external_id", conversationExternalId);
-        command.Parameters.AddWithValue("identity_namespace", identityNamespace);
         await using var reader = await command.ExecuteReaderAsync();
 
-        Assert.True(await reader.ReadAsync(), "The first source identity should create an unresolved calibration scope.");
+        Assert.True(await reader.ReadAsync(), "The ingested account should retain its stable wxid.");
         var accountId = reader.GetGuid(0);
         var conversationId = reader.GetGuid(1);
-        Assert.Equal(2L, reader.GetInt64(2));
+        Assert.Equal("wxid_test_account", reader.GetString(2));
         Assert.Equal(4L, reader.GetInt64(3));
-        Assert.Equal(2L, reader.GetInt64(4));
-        Assert.Equal("Unresolved", reader.GetString(5));
-        Assert.Equal(1L, reader.GetInt64(6));
-        Assert.True(reader.IsDBNull(7));
-        Assert.True(reader.IsDBNull(8));
-        Assert.False(await reader.ReadAsync(), "The configured conversation should have one matching calibration scope.");
+        Assert.Equal(5L, reader.GetInt64(4));
+        Assert.Equal(1L, reader.GetInt64(5));
+        Assert.Equal(0L, reader.GetInt64(6));
+        Assert.False(await reader.ReadAsync(), "The account should have one configured conversation.");
         await reader.CloseAsync();
 
         await using var messageCommand = new NpgsqlCommand("""
@@ -253,12 +261,16 @@ public sealed class PostgresReaderIngestionMigrationTests
         messageCommand.Parameters.AddWithValue("account_id", accountId);
         messageCommand.Parameters.AddWithValue("conversation_id", conversationId);
         Assert.Equal(1L, await messageCommand.ExecuteScalarAsync());
+        messageCommand.Parameters["message_id"].Value = expectedOtherShardMessageId;
+        Assert.Equal(1L, await messageCommand.ExecuteScalarAsync());
         messageCommand.Parameters["message_id"].Value = expectedDifferentSourceMessageId;
+        Assert.Equal(1L, await messageCommand.ExecuteScalarAsync());
+        messageCommand.Parameters["message_id"].Value = expectedUnknownMessageId;
         Assert.Equal(1L, await messageCommand.ExecuteScalarAsync());
 
         await using var sourceCommand = new NpgsqlCommand("""
-            SELECT local_id, sort_seq, server_id, shard_fingerprint, message_table,
-                   raw_sender_id, identity_namespace, external_message_id
+            SELECT local_id, sort_seq, server_id, shard, shard_fingerprint, message_table,
+                   raw_sender_id, sender_wxid, identity_namespace, external_message_id
             FROM copilot.message_sources
             WHERE message_id = @message_id AND match_status = 'Created';
             """, connection);
@@ -268,45 +280,33 @@ public sealed class PostgresReaderIngestionMigrationTests
         Assert.Equal("local-message-1", sourceReader.GetString(0));
         Assert.Equal("1", sourceReader.GetString(1));
         Assert.Equal("server-message-1", sourceReader.GetString(2));
-        Assert.Equal("test-shard", sourceReader.GetString(3));
-        Assert.Equal("Message_test", sourceReader.GetString(4));
-        Assert.Equal("1", sourceReader.GetString(5));
-        Assert.Equal(identityNamespace, sourceReader.GetString(6));
-        Assert.StartsWith("wx4:", sourceReader.GetString(7), StringComparison.Ordinal);
+        Assert.Equal("message_0.db", sourceReader.GetString(3));
+        Assert.Equal("test-shard", sourceReader.GetString(4));
+        Assert.Equal("Message_test", sourceReader.GetString(5));
+        Assert.Equal("1", sourceReader.GetString(6));
+        Assert.Equal("wxid_test_account", sourceReader.GetString(7));
+        Assert.StartsWith("m2-test-namespace-", sourceReader.GetString(8), StringComparison.Ordinal);
+        Assert.StartsWith("wx4:", sourceReader.GetString(9), StringComparison.Ordinal);
         Assert.False(await sourceReader.ReadAsync());
-    }
+        await sourceReader.CloseAsync();
 
-    private static async Task AssertResolvedEqualSenderIdsAreRejectedAsync(
-        NpgsqlDataSource dataSource,
-        string accountExternalId,
-        string conversationExternalId,
-        string identityNamespace)
-    {
-        const string sql = """
-            UPDATE copilot.sender_calibrations AS calibration
-            SET account_self_raw_sender_id = '1',
-                contact_raw_sender_id = '1',
-                calibration_version = calibration.calibration_version + 1,
-                perspective_state = 'Confirmed',
-                evidence = 'UserConfirmed',
-                confirmed_at = now()
-            FROM copilot.chat_accounts AS account
-            JOIN copilot.conversations AS conversation ON conversation.account_id = account.id
-            WHERE calibration.account_id = account.id
-              AND calibration.conversation_id = conversation.id
-              AND account.provider = 'local-wechat'
-              AND account.external_account_id = @account_external_id
-              AND conversation.external_conversation_id = @conversation_external_id
-              AND calibration.identity_namespace = @identity_namespace;
-            """;
-        await using var connection = await dataSource.OpenConnectionAsync();
-        await using var command = new NpgsqlCommand(sql, connection);
-        command.Parameters.AddWithValue("account_external_id", accountExternalId);
-        command.Parameters.AddWithValue("conversation_external_id", conversationExternalId);
-        command.Parameters.AddWithValue("identity_namespace", identityNamespace);
+        await using var directionCommand = new NpgsqlCommand("""
+            SELECT direction, direction_evidence
+            FROM copilot.chat_messages
+            WHERE id = @message_id;
+            """, connection);
+        directionCommand.Parameters.AddWithValue("message_id", expectedMessageId);
+        await using var directionReader = await directionCommand.ExecuteReaderAsync();
+        Assert.True(await directionReader.ReadAsync());
+        Assert.Equal("Outgoing", directionReader.GetString(0));
+        Assert.Equal("SourceConfirmed", directionReader.GetString(1));
+        await directionReader.CloseAsync();
 
-        var exception = await Assert.ThrowsAsync<PostgresException>(() => command.ExecuteNonQueryAsync());
-        Assert.Equal(PostgresErrorCodes.CheckViolation, exception.SqlState);
+        directionCommand.Parameters["message_id"].Value = expectedUnknownMessageId;
+        await using var unknownDirectionReader = await directionCommand.ExecuteReaderAsync();
+        Assert.True(await unknownDirectionReader.ReadAsync());
+        Assert.Equal("Unknown", unknownDirectionReader.GetString(0));
+        Assert.Equal("Unresolved", unknownDirectionReader.GetString(1));
     }
 }
 

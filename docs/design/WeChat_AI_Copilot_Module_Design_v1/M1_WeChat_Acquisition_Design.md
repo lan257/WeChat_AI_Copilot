@@ -1,5 +1,7 @@
 # M1 微信接入与消息采集：详细设计
 
+> 2026-10-20 实施更新：此处原有的小 ID / 人工校准方向方案已被《WeChat_Automatic_Sender_Identity_Implementation_Spec.md》取代。实时和历史采集须共用 wxid 归一化，并按来源分片保存身份。
+
 > 状态：待评审；参照总体架构 v1.0-Draft / Contracts v1。  
 > 开发定位：独立 Windows 本机只读进程 + ASP.NET Core 接入薄层；M1 可以在 M2 使用 Mock 吞吐时并行开发。
 
@@ -79,8 +81,9 @@ M2 Message Domain
 ## 6. 来源身份和发送方向
 
 - 对应字段：当前读取包原始行具有 `local_id`、`sort_seq`、`server_id`、`real_sender_id` 等候选；`server_id` 在本次 92 条中非空且互异，但未证明全域唯一。
-- 为 M2 提供稳定的 `identityNamespace` 和分片指纹候选；M1 须说明哪一级的 sender ID 范围含义已确认、哪一级仍未知。严禁 M1 根据“较小 ID 是本人”永久写死全局方向。
-- M1 对原始事件发送 `direction=Unknown` / `directionEvidence=Unresolved`；M2 在账号/会话/namespace 作用域内可生成“小 ID=本人”的待确认默认值，并由用户确认/互换。M1 不负责比较 sender 大小，也不得把它写成跨账号固定规则。
+- 为 M2 提供 `shard`、分片指纹、消息表、原始 `real_sender_id` 与可信 `sender_wxid`。分片内 `Name2Id` 是短 ID 的唯一有效解析范围；严禁按较小 ID、昵称或会话气泡推断方向。
+- 当前账号 wxid 由活动账号目录的 `WeChatDB.get_self_info().username` 读取，并与 `WeChatDB.wxid` 核对；读取失败时 Reader 显式报账号身份不可用，不能继续猜测。
+- M1 的实时监听与历史补录共用同一个消息归一化方法。通过 sender wxid 与当前账号 wxid 自动写入方向；无法可信解析时写入 `Unknown`，保留原始身份字段。
 - 不同 shard 存在相同 `local_id/sort_seq` 时必须保留 shard 来源，不能基于同一旧派生键就无声合并。
 
 ## 7. 控制和状态接口

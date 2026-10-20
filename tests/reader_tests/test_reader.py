@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import email.message
+import hashlib
 import importlib.util
 import io
 import json
@@ -379,6 +380,7 @@ class ReaderContractTests(unittest.TestCase):
     def setUp(self) -> None:
         self.settings = {
             "accountExternalId": "sample-account",
+            "accountWxid": "wxid_owner",
             "conversationExternalId": "sample-contact",
             "transport": {
                 "enabled": True,
@@ -398,6 +400,7 @@ class ReaderContractTests(unittest.TestCase):
             "localId": str(local_id),
             "sortSeq": str(90000 + local_id),
             "serverId": "server-1",
+            "shard": "message_0.db",
             "shardFingerprint": "a" * 64,
             "messageTable": "Msg_0123456789abcdef0123456789abcdef",
         }
@@ -414,6 +417,7 @@ class ReaderContractTests(unittest.TestCase):
             "localId": str(local_id),
             "sortSeq": str(90000 + local_id),
             "serverId": "server-1",
+            "shard": "message_0.db",
             "shardFingerprint": "a" * 64,
             "messageTable": "Msg_0123456789abcdef0123456789abcdef",
         }
@@ -440,6 +444,7 @@ class ReaderContractTests(unittest.TestCase):
         self.assertEqual(json.loads(request.data.decode("utf-8")), event)
         self.assertEqual(event["provider"], "local-wechat")
         self.assertEqual(event["direction"], "Unknown")
+        self.assertIsNone(event["senderWxid"])
         self.assertTrue(str(event["externalMessageId"]).startswith("wx4:"))
         self.assertIn('"contract":"RawMessageEventV1"', stderr.getvalue())
         self.assertNotIn("t" * 40, stderr.getvalue())
@@ -528,6 +533,7 @@ class ReaderContractTests(unittest.TestCase):
             "localId": "58",
             "sortSeq": "90001",
             "serverId": None,
+            "shard": "message_1.db",
             "shardFingerprint": "a" * 64,
             "messageTable": "Msg_fixture",
         }
@@ -536,8 +542,171 @@ class ReaderContractTests(unittest.TestCase):
 
         self.assertEqual(
             event["externalMessageId"],
-            "wx4:cde6f87071b0390f847eedecfb2c5a4825ef2a3b49c2da85c9b413b0444a5925",
+            "wx4:" + hashlib.sha256(
+                "\0".join((
+                    "wxid_owner", "sample-account", "sample-contact", "a" * 64,
+                    "Msg_fixture", "58",
+                )).encode("utf-8")
+            ).hexdigest(),
         )
+
+    def test_direction_uses_the_message_shard_namespace(self) -> None:
+        class ShardDatabase:
+            def __init__(self) -> None:
+                self.rows = {
+                    ("message__message_0.db", 1): "wxid_owner",
+                    ("message__message_1.db", 1): "wxid_friend",
+                    ("message__message_0.db", 2): "wxid_owner",
+                    ("message__message_1.db", 4): "wxid_owner",
+                    ("message__message_2.db", 1): "wxid_owner",
+                }
+
+            def sender_username(self, shard: str, sender_id: int) -> str:
+                return self.rows.get((shard, int(sender_id)), "")
+
+        database = ShardDatabase()
+        self.assertEqual(reader.resolve_direction(
+            self_wxid="wxid_owner", shard="message_0.db", sender_id=1, db=database,
+        ), ("Self", "wxid_owner"))
+        self.assertEqual(reader.resolve_direction(
+            self_wxid="wxid_owner", shard="message_1.db", sender_id=1, db=database,
+        ), ("Peer", "wxid_friend"))
+        for shard, sender_id in (("message_0.db", 2), ("message_1.db", 4), ("message_2.db", 1)):
+            self.assertEqual(reader.resolve_direction(
+                self_wxid="wxid_owner", shard=shard, sender_id=sender_id, db=database,
+            )[0], "Self")
+
+    def test_unresolved_sender_or_account_wxid_stays_unknown(self) -> None:
+        class EmptyDatabase:
+            def sender_username(self, _shard: str, _sender_id: int) -> str:
+                return ""
+
+        self.assertEqual(reader.resolve_direction(
+            self_wxid="wxid_owner", shard="message_0.db", sender_id=100, db=EmptyDatabase(),
+        ), ("Unknown", None))
+        self.assertEqual(reader.resolve_direction(
+            self_wxid=None, shard="message_0.db", sender_id=2, db=EmptyDatabase(),
+            sender_wxid="wxid_owner",
+        ), ("Unknown", "wxid_owner"))
+
+    def test_same_shard_sender_id_is_stable_across_conversations(self) -> None:
+        class ShardDatabase:
+            def sender_username(self, shard: str, sender_id: int) -> str:
+                self.asserted = (shard, sender_id)
+                return "wxid_friend"
+
+        database = ShardDatabase()
+        row = {"type": 1, "create_time": 1791501600, "content": "fixture", "sender_id": 1}
+        identity = {
+            "localId": "58", "sortSeq": "90001", "serverId": None,
+            "shard": "message_0.db", "shardFingerprint": "a" * 64,
+            "messageTable": "Msg_fixture",
+        }
+        first = reader._normalize_message(database, self.settings, "Realtime", row, identity)
+        second_settings = {**self.settings, "conversationExternalId": "other-contact"}
+        second = reader._normalize_message(database, second_settings, "Realtime", row, identity)
+
+        self.assertEqual("Incoming", first["direction"])
+        self.assertEqual(first["senderWxid"], second["senderWxid"])
+        self.assertEqual(first["direction"], second["direction"])
+
+    def test_consecutive_self_and_peer_messages_need_no_identity_confirmation(self) -> None:
+        class ShardDatabase:
+            senders = {
+                ("message__message_0.db", 2): "wxid_owner",
+                ("message__message_0.db", 4): "wxid_friend",
+            }
+
+            def sender_username(self, shard: str, sender_id: int) -> str:
+                return self.senders.get((shard, sender_id), "")
+
+        database = ShardDatabase()
+        events = []
+        for sender_id in [2] * 10 + [4] * 10:
+            local_id = len(events) + 1
+            row = {
+                "type": 1,
+                "create_time": 1791501600 + local_id,
+                "content": "fixture",
+                "sender_id": sender_id,
+            }
+            identity = {
+                "localId": str(local_id), "sortSeq": str(90000 + local_id), "serverId": None,
+                "shard": "message_0.db", "shardFingerprint": "a" * 64,
+                "messageTable": "Msg_fixture",
+            }
+            events.append(reader._normalize_message(database, self.settings, "Realtime", row, identity))
+
+        self.assertEqual(["Outgoing"] * 10 + ["Incoming"] * 10,
+                         [event["direction"] for event in events])
+        self.assertEqual({"SourceConfirmed"}, {event["directionEvidence"] for event in events})
+
+    def test_non_text_media_messages_keep_sender_identity_from_row_metadata(self) -> None:
+        class ShardDatabase:
+            def sender_username(self, _shard: str, _sender_id: int) -> str:
+                return "wxid_owner"
+
+        database = ShardDatabase()
+        identity = {
+            "localId": "58", "sortSeq": "90001", "serverId": "media-server-id",
+            "shard": "message_0.db", "shardFingerprint": "a" * 64,
+            "messageTable": "Msg_fixture",
+        }
+        for local_type in (3, 34, 49):
+            event = reader._normalize_message(database, self.settings, "HistoryBackfill", {
+                "type": local_type,
+                "create_time": 1791501600,
+                "content": None,
+                "sender_id": 2,
+            }, identity)
+            self.assertIsNone(event["text"])
+            self.assertEqual("wxid_owner", event["senderWxid"])
+            self.assertEqual("Outgoing", event["direction"])
+
+    def test_self_wxid_must_match_the_selected_account_directory(self) -> None:
+        class SelfDatabase:
+            wxid = "wxid_owner"
+
+            def get_self_info(self) -> dict[str, str]:
+                return {"username": "wxid_owner"}
+
+        self.assertEqual("wxid_owner", reader._verified_self_wxid(SelfDatabase()))
+        SelfDatabase.get_self_info = lambda self: {"username": "wxid_other"}  # type: ignore[method-assign]
+        self.assertEqual("", reader._verified_self_wxid(SelfDatabase()))
+
+    def test_realtime_and_history_share_identity_normalization(self) -> None:
+        class ShardDatabase:
+            def sender_username(self, shard: str, sender_id: int) -> str:
+                self.asserted = (shard, sender_id)
+                return "wxid_owner" if shard == "message__message_0.db" else "wxid_friend"
+
+        database = ShardDatabase()
+        row = {"type": 1, "create_time": 1791501600, "content": "fixture", "sender_id": 1}
+        identity = {
+            "localId": "58", "sortSeq": "90001", "serverId": "server-1",
+            "shard": "message_0.db", "shardFingerprint": "a" * 64,
+            "messageTable": "Msg_fixture",
+        }
+        realtime = reader._normalize_message(database, self.settings, "Realtime", row, identity)
+        history = reader._normalize_message(database, self.settings, "HistoryBackfill", row, identity)
+        self.assertEqual(realtime["senderWxid"], "wxid_owner")
+        self.assertEqual(realtime["direction"], "Outgoing")
+        self.assertEqual(realtime["direction"], history["direction"])
+        self.assertEqual(realtime["externalMessageId"], history["externalMessageId"])
+
+    def test_duplicate_local_ids_in_different_shards_have_different_external_ids(self) -> None:
+        row = {"type": 1, "create_time": 1791501600, "content": "fixture", "sender_id": 1}
+        base = {
+            "localId": "58", "sortSeq": "90001", "serverId": None,
+            "shardFingerprint": "a" * 64, "messageTable": "Msg_fixture",
+        }
+        first = reader._raw_event(self.settings, "Realtime", row, {**base, "shard": "message_0.db"})
+        second = reader._raw_event(
+            self.settings, "Realtime", row,
+            {**base, "shard": "message_1.db", "shardFingerprint": "b" * 64},
+        )
+        self.assertEqual(first["sourceIdentity"]["localId"], second["sourceIdentity"]["localId"])
+        self.assertNotEqual(first["externalMessageId"], second["externalMessageId"])
 
     def test_needs_review_receipt_is_reported_without_message_identifiers(self) -> None:
         receipt = {

@@ -220,6 +220,7 @@ internal sealed class PostgresConversationChangeOutboxDeliveryStoreV1(NpgsqlData
     private static MemoryConsolidationTriggerKindV1 ParseKind(string eventType) => eventType switch
     {
         "message.created" => MemoryConsolidationTriggerKindV1.MessageCreated,
+        "message.identity-resolved" => MemoryConsolidationTriggerKindV1.MessageCreated,
         "conversation.perspective-confirmed" => MemoryConsolidationTriggerKindV1.PerspectiveConfirmed,
         "conversation.perspective-changed" => MemoryConsolidationTriggerKindV1.PerspectiveChanged,
         _ => throw new InvalidOperationException("The outbox event type is not supported by the M3 consumer.")

@@ -74,24 +74,22 @@ export async function loadConversation({ incremental=false }={}) {
     const results=await Promise.allSettled([
       request('/api/conversations/current',{target:s}),
       request('/api/conversations/current/messages?limit=50',{target:s}),
-      request('/api/conversations/current/sender-perspective',{target:s}),
       request('/api/conversations/current/memory?limit=100',{target:s}),
       request('/api/skills',{target:s}),
       request('/api/skills/selection',{target:s}),
       request('/api/ai/tasks',{target:s}),
       request('/api/history/jobs',{target:s})
     ]);
-    const [snapshot,messages,perspective,memory,skills,selection,tasks,historyJobs]=results;
+    const [snapshot,messages,memory,skills,selection,tasks,historyJobs]=results;
     if(snapshot.status==='fulfilled'&&scopedMatch(snapshot.value,s)){
       const next=snapshot.value;
       if(s.snapshot&&(next.messageSetRevision!==s.snapshot.messageSetRevision || next.calibrationVersion!==s.snapshot.calibrationVersion))s.stale=Boolean(s.suggestions);
       s.snapshot=next;
     } else if(snapshot.status==='rejected')s.error=errorText(snapshot.reason);
     if(messages.status==='fulfilled'&&scopedMatch(messages.value,s)){
-      if(s.snapshot?.calibrationVersion!==messages.value.calibrationVersion){s.error='身份校准版本变化，请刷新消息。';}
+      if(s.snapshot?.calibrationVersion!==messages.value.calibrationVersion){s.error='账号身份状态已变化，请刷新消息。';}
       else {if(!incremental)s.messages=[];mergeMessages(s,messages.value.messages||[]);if(!incremental)s.hasMore=messages.value.hasMoreMessages;s.coverage=messages.value.historyCoverage;}
     }else if(messages.status==='rejected')s.error=errorText(messages.reason);
-    if(perspective.status==='fulfilled'&&scopedMatch(perspective.value,s))s.perspective=perspective.value;
     if(memory.status==='fulfilled')s.memories=Array.isArray(memory.value)?memory.value:memory.value?.items||memory.value?.memoryItems||[];
     if(selection.status==='fulfilled'&&(s.selectionEpoch||0)===selectionEpoch){
       if(s.revisionDigest && s.revisionDigest!==selection.value?.revisionDigest)s.stale=Boolean(s.suggestions);
@@ -159,8 +157,8 @@ export function renderHeader() {
   const s=current(),c=contact();$('chatTitle').textContent=name();$('chatAvatar').textContent=name().slice(0,1);
   $('chatStatus').textContent=c?.captureState==='Listening'?'监听中':c?.isMonitored?'监听待就绪':'未监听';$('chatStatus').classList.toggle('off',c?.captureState!=='Listening');
   const confirmed=s.snapshot?.perspectiveState==='Confirmed';
-  $('chatSubtitle').textContent=`${s.messages.length} 条已载入 · ${confirmed?'身份已校准':'发送方向待确认'} · 只读微信`;
-  $('identityBanner').classList.toggle('hidden',confirmed||!s.snapshot);$('aiContact').textContent=name();
+  $('chatSubtitle').textContent=`${s.messages.length} 条已载入 · ${confirmed?'发送者方向自动识别':'账号身份尚未识别'} · 只读微信`;
+  $('aiContact').textContent=name();
 }
 export function renderMessages({preserve=true,restore=false}={}) {
   const s=current(),box=$('chatTimeline'),previous=box.scrollTop,nearBottom=box.scrollHeight-box.clientHeight-previous<90;
@@ -169,10 +167,11 @@ export function renderMessages({preserve=true,restore=false}={}) {
   if(first)html+=`<div class="date-line">${escape(new Date(first.occurredAt).toLocaleDateString('zh-CN'))}</div>`;
   html+=s.messages.map(m=>{
     const mine=m.direction==='Outgoing';
+    const senderUnknown=m.direction==='Unknown';
     const text=m.text || ({Image:'[图片]',Voice:'[语音]',Video:'[视频]',File:'[文件]',Text:'[文本内容不可用]'}[m.messageType] || `[${m.messageType||'非文本消息'}]`);
-    const avatar=`<span class="avatar">${mine?'我':escape(name().slice(0,1))}</span>`;
-    const bubble=`<div class="bubble-wrap"><div class="bubble">${escape(text)}</div><div class="bubble-time">${escape(time(m.occurredAt))}${m.direction==='Unknown'?' · 方向待确认':''}</div></div>`;
-    return `<div class="bubble-row ${mine?'mine':''}" data-message-id="${escape(m.messageId)}">${mine?bubble+avatar:avatar+bubble}</div>`;
+    const avatar=`<span class="avatar">${mine?'我':senderUnknown?'?':escape(name().slice(0,1))}</span>`;
+    const bubble=`<div class="bubble-wrap"><div class="bubble">${escape(text)}</div><div class="bubble-time">${escape(time(m.occurredAt))}${senderUnknown?' · 发送者未知':''}</div></div>`;
+    return `<div class="bubble-row ${mine?'mine':''} ${senderUnknown?'unknown':''}" data-message-id="${escape(m.messageId)}">${mine?bubble+avatar:avatar+bubble}</div>`;
   }).join('');
   if(!s.messages.length)html+=placeholder(s.error||store.connectionError||'当前会话暂无可读取消息。');
   if(renderedMessages.get(box)!==html){box.innerHTML=html;renderedMessages.set(box,html);}

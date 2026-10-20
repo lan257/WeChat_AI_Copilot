@@ -110,7 +110,7 @@ public sealed class CodexCliAgentRuntimeTests
                             MessageType = "Text",
                             OccurredAt = DateTimeOffset.UtcNow.AddDays(-1),
                             Direction = MessageDirectionV1.Incoming,
-                            DirectionEvidence = DirectionEvidenceV1.UserConfirmed
+                            DirectionEvidence = DirectionEvidenceV1.SourceConfirmed
                         }
                     }
                 ]
@@ -286,7 +286,7 @@ public sealed class CodexCliAgentRuntimeTests
                             MessageType = "Text",
                             OccurredAt = DateTimeOffset.UtcNow.AddDays(-1),
                             Direction = MessageDirectionV1.Incoming,
-                            DirectionEvidence = DirectionEvidenceV1.UserConfirmed
+                            DirectionEvidence = DirectionEvidenceV1.SourceConfirmed
                         }
                     }
                 ]
@@ -488,7 +488,7 @@ public sealed class CodexCliAgentRuntimeTests
                             MessageType = "Text",
                             OccurredAt = DateTimeOffset.UtcNow.AddDays(-3),
                             Direction = MessageDirectionV1.Incoming,
-                            DirectionEvidence = DirectionEvidenceV1.UserConfirmed
+                            DirectionEvidence = DirectionEvidenceV1.SourceConfirmed
                         }
                     }
                 ]
@@ -934,7 +934,7 @@ public sealed class CodexCliAgentRuntimeTests
                 MessageType = "Text",
                 OccurredAtUtc = DateTimeOffset.UtcNow.AddMinutes(-1),
                 Direction = MessageDirectionV1.Incoming,
-                DirectionEvidence = DirectionEvidenceV1.UserConfirmed
+                DirectionEvidence = DirectionEvidenceV1.SourceConfirmed
             }
         ],
         ParticipantProfiles =
@@ -996,7 +996,7 @@ public sealed class CodexCliAgentRuntimeTests
                 MessageType = "Text",
                 OccurredAt = DateTimeOffset.UtcNow.AddMinutes(-1),
                 Direction = MessageDirectionV1.Incoming,
-                DirectionEvidence = DirectionEvidenceV1.UserConfirmed
+                DirectionEvidence = DirectionEvidenceV1.SourceConfirmed
             }
         ],
         ParticipantProfiles =

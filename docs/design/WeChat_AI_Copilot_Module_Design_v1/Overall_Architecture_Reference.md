@@ -1,5 +1,7 @@
 # 微信 AI 沟通助手：总体架构与模块边界设计
 
+> 2026-10-20 实施更新：本文原有的短 sender ID 默认视角和人工确认流程已被《WeChat_Automatic_Sender_Identity_Implementation_Spec.md》取代。当前方向基于账号 wxid 与消息所在分片内的 sender wxid；不可解析时保持 `Unknown`。
+
 > **文档版本：** 1.0-Draft（总体设计，供独立评审与模块详细设计使用）  
 > **编写日期：** 2026-10-09  
 > **阶段：** 核心技术 POC 已完成限定范围验证；开始正式架构设计  

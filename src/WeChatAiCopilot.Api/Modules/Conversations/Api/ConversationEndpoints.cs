@@ -99,6 +99,12 @@ public static class ConversationEndpoints
             return Error(context, StatusCodes.Status503ServiceUnavailable,
                 "DATABASE_UNAVAILABLE", "The formal message store is unavailable.", retryable: true);
         }
+        catch (ReaderAccountIdentityConflictException)
+        {
+            return Error(context, StatusCodes.Status409Conflict,
+                "READER_ACCOUNT_WXID_CONFLICT",
+                "The configured Reader account directory is bound to a different WeChat identity.", retryable: false);
+        }
         catch (InvalidOperationException)
         {
             return Error(context, StatusCodes.Status409Conflict,
@@ -188,6 +194,12 @@ public static class ConversationEndpoints
         {
             return Error(context, StatusCodes.Status503ServiceUnavailable,
                 "DATABASE_UNAVAILABLE", "The formal message store is unavailable.", retryable: true);
+        }
+        catch (ReaderAccountIdentityConflictException)
+        {
+            return Error(context, StatusCodes.Status409Conflict,
+                "READER_ACCOUNT_WXID_CONFLICT",
+                "The configured Reader account directory is bound to a different WeChat identity.", retryable: false);
         }
         catch (ArgumentException)
         {

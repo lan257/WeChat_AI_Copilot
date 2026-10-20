@@ -10,7 +10,7 @@
 | M1 Reader → M2 目录 | `/api/reader/discovery-jobs/next` 与目录提交接口 | 只有 Web 用户显式创建任务后读取会话目录；只提交 Direct 会话外部 ID 和显示名，不提交消息摘要或正文。 |
 | M5 Web → M2 消息域 | `GET /api/accounts`、`GET /api/accounts/{accountId}/conversations`、`GET /api/conversations/current*` | Web 身份；目录限于正式数据库已知账号；选中 UUID 会通过数据库父子关系解析，`/current` 无参数时继续使用兼容配置。 |
 | M5 Web → M1 Reader | `PUT /api/accounts/{accountId}/reader-targets`、`GET /api/reader/status` | Web 身份；监听集合与当前查看会话分离，目标替换采用版本校验且上限为 20。 |
-| M2 消息域 → M3 上下文 | `IMessageQueryV1`、消息页 / source identity / sender calibration | 查询参数必须经过获准会话范围；方向未确认或校准版本不符的派生内容不能进入 Agent 上下文。 |
+| M2 消息域 → M3 上下文 | `IMessageQueryV1`、消息页 / source identity / persisted direction | 查询参数必须经过获准会话范围；仅 `SourceConfirmed` 方向可用于参与者画像和自动记忆，Unknown 仍可作中性检索。 |
 | M5 Web → M3 上下文 | `GET/POST/PUT/DELETE /api/conversations/current/memory[/{memoryId}]` | Web Bearer 身份；记忆与证据受账号、联系人、会话和参与者身份校验。 |
 | M3 上下文 → M4 Agent | `ContextBundleV1`、`IContextToolSessionV1` | 初始上下文和后续历史/证据工具绑定同一获准会话；工具调用有界并复核消息集修订。 |
 | M5 Web → M4 Agent | `GET /api/ai/personas`、`GET /api/ai/execution-profiles`、建议批次、咨询 Thread/Turn、运行状态 | Web Bearer 身份；四档由服务端映射为上下文/检索预算；咨询历史仅属于创建它的账号与会话；建议恰有 3 条非空、互异结果。 |
@@ -37,8 +37,6 @@
 | `POST /api/reader/discovery-jobs/{jobId}/sessions` | M1/M2 | Reader token | 登记会话外部 ID 和本机显示名，不含聊天正文。 |
 | `GET /api/conversations/current` | M2/M5 | Web token | 读取服务端配置会话。 |
 | `GET /api/conversations/current/messages` | M2/M5 | Web token | 分页读取配置会话消息。 |
-| `GET /api/conversations/current/sender-perspective` | M2/M5 | Web token | 读取发送者确认状态与视角版本。 |
-| `PUT /api/conversations/current/sender-perspective` | M2/M5 | Web token | 提交明确确认后的视角变更。 |
 | `GET/POST /api/conversations/current/memory` | M3/M5 | Web token | 列出或创建人工记忆。 |
 | `GET/PUT/DELETE /api/conversations/current/memory/{memoryId}` | M3/M5 | Web token | 读取、更新或删除当前获准范围内的记忆。 |
 | `GET /api/ai/personas` | M4/M5 | Web token | 返回服务器允许的 persona ID 与显示名。 |
@@ -55,7 +53,7 @@
 | 模块 | 正式责任 | 对外 / 共享边界 |
 |---|---|---|
 | M1 Reader | 单活动账号只读、最多 20 个服务端目标、版本化同步、Reader 心跳、用户触发的 Direct 目录发现、来源字段与有界历史补录 | D01 `RawMessageEventV1`、D02 `HistoryBatchV1`、Reader status/target/directory API；API Reader 凭据。 |
-| M2 消息域 | 账号、联系人、会话、消息、来源身份、发送者校准和查询 | 消息查询接口、校准状态、`messageId` / `messageSetRevision`。 |
+| M2 消息域 | 账号、联系人、会话、消息、分片来源身份、方向解析和查询 | 消息查询接口、持久化方向、`messageId` / `messageSetRevision`。 |
 | M3 上下文 | 人工记忆 CRUD、证据验证、ContextBundle、画像/消息记忆沉淀与重建 | Context / Memory 契约、`contextRevision`、`IContextToolSessionV1`。 |
 | M4 Agent | Runtime、persona、建议批次、咨询 Thread/Turn、运行记录 | 建议、咨询及运行 API；`IAgentRuntime` 和受限 Codex CLI executor。 |
 | M5 工作区 | Web 授权、会话展示、人设、复制建议、咨询交互 | HTTP API；页面只把建议复制到剪贴板，不调用微信发送。 |

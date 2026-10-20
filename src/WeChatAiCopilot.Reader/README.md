@@ -2,11 +2,11 @@
 
 本模块是正式项目里的 Windows 本机只读读取器。它连接一个当前活动微信账号，可同时监听服务端明确授权的最多 20 个普通一对一会话。实时消息为 `RawMessageEventV1`，历史读取为有界的 `HistoryBatchV1`。Reader 每 5 秒同步一次监听目标并发送运行心跳；Web 当前查看的会话不会改变监听集合。
 
-读取器只使用 `wechatauto-replica==1.2.5.1` 的 `wechatauto/db.py` 数据库读取模块。准备脚本会验证 wheel 内文件的 SHA-256，并且只解出数据库模块和无操作 logger；不安装或导入发送、UI、CLI、媒体或 Moments 模块。读取器禁用持久化密钥保存和跨账号回退。消息数据库解密缓存和临时密钥路径放在系统临时目录，进程结束时清理。
+读取器只使用 `wechatauto-replica==1.2.7.0` 的 `wechatauto/db.py` 数据库读取模块。该版本包含 v1.2.6.1 的分片 `Name2Id` 修复，`sender_username(shard, sender_id)` 仅查消息所在分片。准备脚本会验证 wheel 内文件的 SHA-256，并且只解出数据库模块和无操作 logger；不安装或导入发送、UI、CLI、媒体或 Moments 模块。读取器禁用持久化密钥保存和跨账号回退。消息数据库解密缓存和临时密钥路径放在系统临时目录，进程结束时清理。
 
 ## 首次准备
 
-要求 Windows、Python 3.11（`py -3.11`）和可访问 PyPI。PowerShell 从本目录运行：
+要求 Windows、Python 3.11 和可访问 PyPI。PowerShell 从本目录运行：
 
 ```powershell
 .\prepare-reader.ps1
@@ -29,13 +29,13 @@
 实时采集输出一条 JSON Lines 事件后持续运行，按 Ctrl+C 停止：
 
 ```powershell
-py -3.11 .\reader.py realtime
+python .\reader.py realtime
 ```
 
 历史补录按 UTC 范围读取文本，最多 5,000 条、每批最多 500 条。时间边界包含起止时刻；时间参数可以省略，但总行数仍有硬上限：
 
 ```powershell
-py -3.11 .\reader.py history --job-id local-check-001 --from-utc 2026-01-01T00:00:00Z --to-utc 2026-10-01T00:00:00Z --max-rows 5000 --batch-size 100
+python .\reader.py history --job-id local-check-001 --from-utc 2026-01-01T00:00:00Z --to-utc 2026-10-01T00:00:00Z --max-rows 5000 --batch-size 100
 ```
 
 命令行标准输出只包含契约 JSON。失败信息只写入标准错误的稳定错误码，不写入消息正文、账号/会话 ID、源 ID 或本地路径。历史读取遇到分片错误或触及上限时会失败且不输出批次，避免把部分结果报告为完成。
@@ -44,10 +44,13 @@ py -3.11 .\reader.py history --job-id local-check-001 --from-utc 2026-01-01T00:0
 
 ## 当前范围与契约限制
 
-- 所有事件的 `direction` 固定为 `Unknown`，`directionEvidence` 固定为 `Unresolved`；不会猜测或使用方向校准。
-- `externalMessageId` 对具有 `localId` 和 `sortSeq` 的行使用现有 `wx4:` SHA-256 规则。跨 shard 唯一性尚未证明；原始 `serverId`、表名和稳定 shard 指纹分别保留。
+- 实时与历史消息共用 `_normalize_message()`：先使用上游按分片解析出的 `sender_username`，缺失时调用 `sender_username(shard, sender_id)`；再与同一账号目录验证过的 `get_self_info().username` 比较。没有可信 wxid 时保持 `Unknown`。
+- 账号 wxid 来自所选 `WeChatDB` 的 `get_self_info().username`，并要求其与该账号目录对应的 `WeChatDB.wxid` 一致；服务端按 `accountExternalId` 绑定这个 wxid，后续不允许同一账号目录换绑到另一个 wxid。
+- `externalMessageId` 使用账号 wxid/账号目录、会话、分片指纹、消息表和 `localId` 生成。相同 local ID 在不同分片或消息表不会互相覆盖；`serverId`、原始分片名、表名、`RawSenderId` 和 `SenderWxid` 分开保留。
+- 旧的短 ID 校准表仅保留为兼容数据，不再用于消息方向判断。旧消息如没有 sender wxid，需要重新从微信源库补读；单靠旧短 ID 不会回算方向。
 - 无法解析的来源时间作为 `null` 输出；带时间范围的历史任务只返回可比较的有效时间行。
 - 当同一 `localId`/`sortSeq` 在多个 shard 命中时，保留该复合键；对不一致的 shard 或 `serverId` 值不作猜测，相关字段置空。
 - D02 当前没有截断、扫描 shard 计数或分片错误字段。为避免静默部分成功，本模块对读取错误和超限采取整体失败；后续如需可恢复进度/部分批次，应先扩展共享历史任务契约。
 - Reader 心跳反映本机 Reader 进程与监听器状态，不代表微信账号一定没有登出；离线账户状态仍以心跳超时标记。网络断线期间暂不提供跨机器持久化消息队列；Reader 事件提交失败会报告错误并停止本轮监听，避免把未提交事件显示成已同步。
+- Reader 拒绝缺少 `sender_username(shard, sender_id)` 的旧运行时，并报告 `READER_UPSTREAM_SENDER_RESOLUTION_UNAVAILABLE`；需运行 `prepare-reader.ps1` 安装固定的 `1.2.7.0`，不会退回旧版短 ID 方向推测。
 - 真实运行时多会话行为仍需在用户明确选择的同一活动账号下验收；不能以本地 Listener 单元行为代替真实微信版本上的双会话验收。

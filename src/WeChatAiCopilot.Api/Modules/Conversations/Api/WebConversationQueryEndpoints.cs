@@ -17,7 +17,6 @@ public static class WebConversationQueryEndpoints
 
         currentConversation.MapGet("", GetCurrentConversationAsync);
         currentConversation.MapGet("/messages", GetCurrentMessagesAsync);
-        currentConversation.MapGet("/sender-perspective", GetCurrentSenderPerspectiveAsync);
         return endpoints;
     }
 
@@ -93,36 +92,6 @@ public static class WebConversationQueryEndpoints
             return snapshot is null
                 ? CurrentConversationNotFound(context)
                 : Results.Ok(snapshot);
-        }
-        catch (NpgsqlException)
-        {
-            return DatabaseUnavailable(context);
-        }
-    }
-
-    private static async Task<IResult> GetCurrentSenderPerspectiveAsync(
-        HttpContext context,
-        IConfiguration configuration,
-        IServiceProvider services,
-        CancellationToken cancellationToken)
-    {
-        var dataSource = services.GetService<NpgsqlDataSource>();
-        if (dataSource is null)
-        {
-            return DatabaseNotConfigured(context);
-        }
-
-        var resolution = await ResolveTargetAsync(context, configuration, dataSource, cancellationToken);
-        if (resolution.Error is not null) return resolution.Error;
-        var target = resolution.Target!;
-
-        try
-        {
-            var view = await new PostgresWebConversationReadServiceV1(dataSource)
-                .GetCurrentSenderPerspectiveAsync(target, cancellationToken);
-            return view is null
-                ? CurrentConversationNotFound(context)
-                : Results.Ok(view);
         }
         catch (NpgsqlException)
         {

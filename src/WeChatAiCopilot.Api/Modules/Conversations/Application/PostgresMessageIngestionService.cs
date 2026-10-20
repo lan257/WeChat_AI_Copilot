@@ -135,6 +135,10 @@ public sealed class PostgresMessageIngestionService(NpgsqlDataSource dataSource)
             throw new ArgumentException("The event does not satisfy RawMessageEventV1.", nameof(message));
         }
 
+        // Direction supplied by a reader is advisory. The persisted direction is always recomputed
+        // from the account wxid bound to this account directory and the resolved sender wxid.
+        message = ResolveMessageIdentity(message);
+
         var candidateExternalId = ComputeLocalWechatExternalMessageId(message);
         var reviewCode = DetermineReviewCode(message, candidateExternalId);
 
@@ -147,18 +151,6 @@ public sealed class PostgresMessageIngestionService(NpgsqlDataSource dataSource)
             contactId,
             message,
             cancellationToken);
-
-        var sourceIdentity = message.SourceIdentity!;
-        var calibrationScope = new SenderCalibrationScopeV1(
-            accountId,
-            conversationId,
-            message.IdentityNamespace,
-            sourceIdentity.MessageTable,
-            sourceIdentity.ShardFingerprint);
-        if (calibrationScope.IsComparable)
-        {
-            await AcquireScopeLockAsync(connection, transaction, calibrationScope, cancellationToken);
-        }
 
         if (reviewCode is not null)
         {
@@ -184,17 +176,32 @@ public sealed class PostgresMessageIngestionService(NpgsqlDataSource dataSource)
             externalMessageId,
             cancellationToken);
 
-        if (existing is not null)
+        var existingMatchedBySourceIdentity = false;
+        if (existing is null)
         {
-            var conflict = await FindExistingSourceConflictAsync(
+            existing = await FindMessageBySourceIdentityAsync(
                 connection,
                 transaction,
                 accountId,
                 conversationId,
                 message,
-                externalMessageId,
-                existing,
                 cancellationToken);
+            existingMatchedBySourceIdentity = existing is not null;
+        }
+
+        if (existing is not null)
+        {
+            var conflict = existingMatchedBySourceIdentity
+                ? FindExistingMessageConflict(conversationId, message, existing)
+                : await FindExistingSourceConflictAsync(
+                    connection,
+                    transaction,
+                    accountId,
+                    conversationId,
+                    message,
+                    externalMessageId,
+                    existing,
+                    cancellationToken);
             if (conflict is not null)
             {
                 await RecordNeedsReviewAsync(
@@ -210,6 +217,9 @@ public sealed class PostgresMessageIngestionService(NpgsqlDataSource dataSource)
                 return NeedsReview(conflict);
             }
 
+            var directionChanged = await UpdateMessageDirectionAsync(
+                connection, transaction, existing.Id, message, cancellationToken);
+
             var matchedSourceAdded = await InsertResolvedSourceAsync(
                 connection,
                 transaction,
@@ -221,9 +231,21 @@ public sealed class PostgresMessageIngestionService(NpgsqlDataSource dataSource)
                 MatchStatusV1.Matched,
                 jobId,
                 cancellationToken);
-            if (matchedSourceAdded)
+            if (matchedSourceAdded || directionChanged)
             {
                 await IncrementConversationRevisionAsync(connection, transaction, accountId, conversationId, cancellationToken);
+            }
+            if (directionChanged)
+            {
+                await InsertOutboxEventAsync(
+                    connection,
+                    transaction,
+                    accountId,
+                    conversationId,
+                    "message.identity-resolved",
+                    ToCursor(existing.Id),
+                    null,
+                    cancellationToken);
             }
             return new IngestReceiptV1
             {
@@ -322,14 +344,6 @@ public sealed class PostgresMessageIngestionService(NpgsqlDataSource dataSource)
             throw new InvalidOperationException("The new message source was already associated with another record.");
         }
 
-        var calibrationChange = await RefreshPerspectiveAsync(
-            connection,
-            transaction,
-            accountId,
-            conversationId,
-            message,
-            cancellationToken);
-
         var cursor = ToCursor(messageId.Value);
         await UpdateConversationCursorAsync(
             connection,
@@ -347,19 +361,6 @@ public sealed class PostgresMessageIngestionService(NpgsqlDataSource dataSource)
             cursor,
             null,
             cancellationToken);
-
-        if (calibrationChange is { Changed: true })
-        {
-            await InsertOutboxEventAsync(
-                connection,
-                transaction,
-                accountId,
-                conversationId,
-                "conversation.perspective-changed",
-                null,
-                calibrationChange.Version,
-                cancellationToken);
-        }
 
         return new IngestReceiptV1
         {
@@ -380,6 +381,7 @@ public sealed class PostgresMessageIngestionService(NpgsqlDataSource dataSource)
         var sourceIdentity = message.SourceIdentity!;
         if (string.IsNullOrWhiteSpace(sourceIdentity.LocalId)
             || string.IsNullOrWhiteSpace(sourceIdentity.SortSeq)
+            || string.IsNullOrWhiteSpace(sourceIdentity.Shard)
             || string.IsNullOrWhiteSpace(sourceIdentity.MessageTable)
             || string.IsNullOrWhiteSpace(sourceIdentity.ShardFingerprint)
             || string.IsNullOrWhiteSpace(message.IdentityNamespace))
@@ -401,25 +403,51 @@ public sealed class PostgresMessageIngestionService(NpgsqlDataSource dataSource)
         return null;
     }
 
-    private static string? ComputeLocalWechatExternalMessageId(RawMessageEventV1 message)
+    internal static string? ComputeLocalWechatExternalMessageId(RawMessageEventV1 message)
     {
         var sourceIdentity = message.SourceIdentity!;
         if (string.IsNullOrWhiteSpace(message.AccountExternalId)
             || string.IsNullOrWhiteSpace(message.ConversationExternalId)
             || string.IsNullOrWhiteSpace(sourceIdentity.LocalId)
-            || string.IsNullOrWhiteSpace(sourceIdentity.SortSeq))
+            || string.IsNullOrWhiteSpace(sourceIdentity.ShardFingerprint)
+            || string.IsNullOrWhiteSpace(sourceIdentity.MessageTable))
         {
             return null;
         }
 
         var stableKey = string.Join(
-            '|',
+            '\0',
+            string.IsNullOrWhiteSpace(message.AccountWxid) ? message.AccountExternalId : message.AccountWxid.Trim(),
             message.AccountExternalId,
             message.ConversationExternalId,
-            sourceIdentity.LocalId,
-            sourceIdentity.SortSeq);
+            sourceIdentity.ShardFingerprint,
+            sourceIdentity.MessageTable,
+            sourceIdentity.LocalId);
         var digest = SHA256.HashData(Encoding.UTF8.GetBytes(stableKey));
         return "wx4:" + Convert.ToHexString(digest).ToLowerInvariant();
+    }
+
+    internal static RawMessageEventV1 ResolveMessageIdentity(RawMessageEventV1 message)
+    {
+        var resolved = MessageIdentityResolverV1.Resolve(message.AccountWxid, message.SenderWxid);
+        return message with
+        {
+            Direction = resolved.Direction,
+            DirectionEvidence = resolved.Evidence
+        };
+    }
+
+    private static string? FindExistingMessageConflict(
+        Guid conversationId,
+        RawMessageEventV1 message,
+        ExistingMessage existing)
+    {
+        var expectedText = message.MessageType == "Text" ? message.Text : null;
+        return existing.ConversationId != conversationId
+            || !string.Equals(existing.MessageType, message.MessageType, StringComparison.Ordinal)
+            || !string.Equals(existing.TextContent, expectedText, StringComparison.Ordinal)
+                ? "SOURCE_CONTENT_OR_CONVERSATION_CONFLICT"
+                : null;
     }
 
     private static async Task<Guid> GetOrCreateAccountAsync(
@@ -429,17 +457,23 @@ public sealed class PostgresMessageIngestionService(NpgsqlDataSource dataSource)
         CancellationToken cancellationToken)
     {
         const string sql = """
-            INSERT INTO copilot.chat_accounts(provider, external_account_id)
-            VALUES (@provider, @external_account_id)
+            INSERT INTO copilot.chat_accounts(provider, external_account_id, account_wxid)
+            VALUES (@provider, @external_account_id, @account_wxid)
             ON CONFLICT (provider, external_account_id)
-            DO UPDATE SET external_account_id = EXCLUDED.external_account_id
+            DO UPDATE SET account_wxid = COALESCE(copilot.chat_accounts.account_wxid, @account_wxid)
+            WHERE copilot.chat_accounts.account_wxid IS NULL
+               OR @account_wxid IS NULL
+               OR copilot.chat_accounts.account_wxid = @account_wxid
             RETURNING id;
             """;
         await using var command = new NpgsqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("provider", message.Provider!);
         command.Parameters.AddWithValue("external_account_id", message.AccountExternalId!);
-        return (Guid)(await command.ExecuteScalarAsync(cancellationToken)
-            ?? throw new InvalidOperationException("Account upsert returned no ID."));
+        AddNullableText(command, "account_wxid", message.AccountWxid);
+        var result = await command.ExecuteScalarAsync(cancellationToken);
+        return result is Guid id
+            ? id
+            : throw new ReaderAccountIdentityConflictException();
     }
 
     private static async Task<Guid> GetOrCreateContactAsync(
@@ -517,10 +551,10 @@ public sealed class PostgresMessageIngestionService(NpgsqlDataSource dataSource)
                 @message_type,
                 @text_content,
                 @source_occurred_at,
-                'Unknown',
-                'Unresolved',
+                @direction,
+                @direction_evidence,
                 @external_message_id,
-                'wx4-legacy')
+                'wx4-shard-v2')
             ON CONFLICT (provider, account_id, external_message_id)
                 WHERE external_message_id IS NOT NULL
             DO NOTHING
@@ -533,6 +567,8 @@ public sealed class PostgresMessageIngestionService(NpgsqlDataSource dataSource)
         command.Parameters.AddWithValue("message_type", message.MessageType!);
         AddNullableText(command, "text_content", message.MessageType == "Text" ? message.Text : null);
         AddNullableTimestamp(command, "source_occurred_at", message.SourceOccurredAt);
+        command.Parameters.AddWithValue("direction", message.Direction.ToString());
+        command.Parameters.AddWithValue("direction_evidence", message.DirectionEvidence.ToString());
         command.Parameters.AddWithValue("external_message_id", externalMessageId);
         var result = await command.ExecuteScalarAsync(cancellationToken);
         return result is Guid id ? id : null;
@@ -571,6 +607,91 @@ public sealed class PostgresMessageIngestionService(NpgsqlDataSource dataSource)
             reader.IsDBNull(3) ? null : reader.GetString(3));
     }
 
+    private static async Task<ExistingMessage?> FindMessageBySourceIdentityAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Guid accountId,
+        Guid conversationId,
+        RawMessageEventV1 message,
+        CancellationToken cancellationToken)
+    {
+        var source = message.SourceIdentity!;
+        if (string.IsNullOrWhiteSpace(source.LocalId)
+            || string.IsNullOrWhiteSpace(source.ShardFingerprint)
+            || string.IsNullOrWhiteSpace(source.MessageTable))
+        {
+            return null;
+        }
+
+        const string sql = """
+            SELECT DISTINCT message.id, message.conversation_id, message.message_type, message.text_content
+            FROM copilot.message_sources AS source
+            JOIN copilot.chat_messages AS message
+              ON message.id = source.message_id
+             AND message.account_id = source.account_id
+             AND message.provider = source.provider
+            WHERE source.account_id = @account_id
+              AND source.conversation_id = @conversation_id
+              AND source.provider = @provider
+              AND source.local_id = @local_id
+              AND source.shard_fingerprint = @shard_fingerprint
+              AND source.message_table = @message_table
+              AND source.match_status IN ('Created', 'Matched')
+            LIMIT 2;
+            """;
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("account_id", accountId);
+        command.Parameters.AddWithValue("conversation_id", conversationId);
+        command.Parameters.AddWithValue("provider", message.Provider!);
+        command.Parameters.AddWithValue("local_id", source.LocalId);
+        command.Parameters.AddWithValue("shard_fingerprint", source.ShardFingerprint);
+        command.Parameters.AddWithValue("message_table", source.MessageTable);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return null;
+        }
+
+        var existing = new ExistingMessage(
+            reader.GetGuid(0),
+            reader.GetGuid(1),
+            reader.GetString(2),
+            reader.IsDBNull(3) ? null : reader.GetString(3));
+        if (await reader.ReadAsync(cancellationToken))
+        {
+            throw new InvalidOperationException("A source shard/local ID points to multiple messages.");
+        }
+
+        return existing;
+    }
+
+    private static async Task<bool> UpdateMessageDirectionAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Guid messageId,
+        RawMessageEventV1 message,
+        CancellationToken cancellationToken)
+    {
+        if (message.DirectionEvidence != DirectionEvidenceV1.SourceConfirmed)
+        {
+            return false;
+        }
+
+        const string sql = """
+            UPDATE copilot.chat_messages
+            SET direction = @direction,
+                direction_evidence = @direction_evidence
+            WHERE id = @message_id
+              AND (direction_evidence <> 'SourceConfirmed'
+                   OR direction <> @direction);
+            """;
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("message_id", messageId);
+        command.Parameters.AddWithValue("direction", message.Direction.ToString());
+        command.Parameters.AddWithValue("direction_evidence", message.DirectionEvidence.ToString());
+        return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
+    }
+
     private static async Task<string?> FindExistingSourceConflictAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
@@ -590,7 +711,8 @@ public sealed class PostgresMessageIngestionService(NpgsqlDataSource dataSource)
         }
 
         const string sql = """
-            SELECT conversation_id, identity_namespace, message_table, shard_fingerprint, raw_sender_id, server_id, message_id
+            SELECT conversation_id, identity_namespace, message_table, shard_fingerprint, raw_sender_id,
+                   server_id, message_id, shard, sender_wxid
             FROM copilot.message_sources
             WHERE account_id = @account_id
               AND provider = @provider
@@ -615,6 +737,12 @@ public sealed class PostgresMessageIngestionService(NpgsqlDataSource dataSource)
                 || HasConflictingKnownServerId(
                     reader.IsDBNull(5) ? null : reader.GetString(5),
                     message.SourceIdentity.ServerId)
+                || HasConflictingKnownValue(
+                    reader.IsDBNull(7) ? null : reader.GetString(7),
+                    message.SourceIdentity.Shard)
+                || HasConflictingKnownValue(
+                    reader.IsDBNull(8) ? null : reader.GetString(8),
+                    message.SenderWxid)
                 || reader.IsDBNull(6)
                 || reader.GetGuid(6) != existing.Id)
             {
@@ -629,6 +757,11 @@ public sealed class PostgresMessageIngestionService(NpgsqlDataSource dataSource)
         existingServerId is not null
         && incomingServerId is not null
         && !string.Equals(existingServerId, incomingServerId, StringComparison.Ordinal);
+
+    private static bool HasConflictingKnownValue(string? existingValue, string? incomingValue) =>
+        existingValue is not null
+        && incomingValue is not null
+        && !string.Equals(existingValue, incomingValue, StringComparison.Ordinal);
 
     private static async Task<bool> InsertResolvedSourceAsync(
         NpgsqlConnection connection,
@@ -653,9 +786,11 @@ public sealed class PostgresMessageIngestionService(NpgsqlDataSource dataSource)
                 server_id,
                 local_id,
                 sort_seq,
+                shard,
                 shard_fingerprint,
                 message_table,
                 raw_sender_id,
+                sender_wxid,
                 identity_namespace,
                 job_id,
                 match_status,
@@ -670,9 +805,11 @@ public sealed class PostgresMessageIngestionService(NpgsqlDataSource dataSource)
                 @server_id,
                 @local_id,
                 @sort_seq,
+                @shard,
                 @shard_fingerprint,
                 @message_table,
                 @raw_sender_id,
+                @sender_wxid,
                 @identity_namespace,
                 @job_id,
                 @match_status,
@@ -690,9 +827,11 @@ public sealed class PostgresMessageIngestionService(NpgsqlDataSource dataSource)
         AddNullableText(command, "server_id", message.SourceIdentity!.ServerId);
         AddNullableText(command, "local_id", message.SourceIdentity.LocalId);
         AddNullableText(command, "sort_seq", message.SourceIdentity.SortSeq);
+        AddNullableText(command, "shard", message.SourceIdentity.Shard);
         AddNullableText(command, "shard_fingerprint", message.SourceIdentity.ShardFingerprint);
         AddNullableText(command, "message_table", message.SourceIdentity.MessageTable);
         AddNullableText(command, "raw_sender_id", message.RawSenderId);
+        AddNullableText(command, "sender_wxid", message.SenderWxid);
         AddNullableText(command, "identity_namespace", message.IdentityNamespace);
         AddNullableText(command, "job_id", jobId);
         command.Parameters.AddWithValue("match_status", matchStatus.ToString());
@@ -722,9 +861,11 @@ public sealed class PostgresMessageIngestionService(NpgsqlDataSource dataSource)
                 server_id,
                 local_id,
                 sort_seq,
+                shard,
                 shard_fingerprint,
                 message_table,
                 raw_sender_id,
+                sender_wxid,
                 identity_namespace,
                 job_id,
                 match_status,
@@ -738,9 +879,11 @@ public sealed class PostgresMessageIngestionService(NpgsqlDataSource dataSource)
                 @server_id,
                 @local_id,
                 @sort_seq,
+                @shard,
                 @shard_fingerprint,
                 @message_table,
                 @raw_sender_id,
+                @sender_wxid,
                 @identity_namespace,
                 @job_id,
                 'NeedsReview',
@@ -757,9 +900,11 @@ public sealed class PostgresMessageIngestionService(NpgsqlDataSource dataSource)
             AddNullableText(sourceCommand, "server_id", message.SourceIdentity!.ServerId);
             AddNullableText(sourceCommand, "local_id", message.SourceIdentity.LocalId);
             AddNullableText(sourceCommand, "sort_seq", message.SourceIdentity.SortSeq);
+            AddNullableText(sourceCommand, "shard", message.SourceIdentity.Shard);
             AddNullableText(sourceCommand, "shard_fingerprint", message.SourceIdentity.ShardFingerprint);
             AddNullableText(sourceCommand, "message_table", message.SourceIdentity.MessageTable);
             AddNullableText(sourceCommand, "raw_sender_id", message.RawSenderId);
+            AddNullableText(sourceCommand, "sender_wxid", message.SenderWxid);
             AddNullableText(sourceCommand, "identity_namespace", message.IdentityNamespace);
             AddNullableText(sourceCommand, "job_id", jobId);
             AddNullableTimestamp(sourceCommand, "source_occurred_at", message.SourceOccurredAt);
@@ -793,54 +938,6 @@ public sealed class PostgresMessageIngestionService(NpgsqlDataSource dataSource)
         reviewCommand.Parameters.Add(new NpgsqlParameter("source_ref", NpgsqlDbType.Jsonb) { Value = sourceRef });
         reviewCommand.Parameters.AddWithValue("reason_code", reasonCode);
         await reviewCommand.ExecuteNonQueryAsync(cancellationToken);
-    }
-
-    private static async Task<CalibrationRefreshResult?> RefreshPerspectiveAsync(
-        NpgsqlConnection connection,
-        NpgsqlTransaction transaction,
-        Guid accountId,
-        Guid conversationId,
-        RawMessageEventV1 message,
-        CancellationToken cancellationToken)
-    {
-        var sourceIdentity = message.SourceIdentity!;
-        var scope = new SenderCalibrationScopeV1(
-            accountId,
-            conversationId,
-            message.IdentityNamespace,
-            sourceIdentity.MessageTable,
-            sourceIdentity.ShardFingerprint);
-        if (!scope.IsComparable)
-        {
-            return null;
-        }
-
-        var observedSenders = await ReadObservedSendersAsync(
-            connection,
-            transaction,
-            scope,
-            cancellationToken);
-        var defaultPerspective = SenderPerspectiveResolver.ResolveDefault(scope, observedSenders);
-        var current = await ReadCalibrationAsync(connection, transaction, scope, cancellationToken);
-        if (current is { State: PerspectiveStateV1.Confirmed })
-        {
-            await ReprojectMessagesAsync(connection, transaction, current, cancellationToken);
-            return null;
-        }
-
-        var next = ChooseNextCalibration(current, defaultPerspective);
-        var changed = current is null
-            || current.State != next.State
-            || !string.Equals(current.AccountSelfRawSenderId, next.AccountSelfRawSenderId, StringComparison.Ordinal)
-            || !string.Equals(current.ContactRawSenderId, next.ContactRawSenderId, StringComparison.Ordinal)
-            || current.Evidence != next.Evidence;
-        if (changed)
-        {
-            await SaveCalibrationAsync(connection, transaction, next, cancellationToken);
-        }
-
-        await ReprojectMessagesAsync(connection, transaction, next, cancellationToken);
-        return changed ? new CalibrationRefreshResult(true, next.CalibrationVersion) : null;
     }
 
     private async Task<HistoryBatchReceiptV1> RecordHistoryBatchAsync(
@@ -1129,242 +1226,6 @@ public sealed class PostgresMessageIngestionService(NpgsqlDataSource dataSource)
         }
     }
 
-    private static async Task<List<ScopedSenderIdentityV1>> ReadObservedSendersAsync(
-        NpgsqlConnection connection,
-        NpgsqlTransaction transaction,
-        SenderCalibrationScopeV1 scope,
-        CancellationToken cancellationToken)
-    {
-        const string sql = """
-            SELECT DISTINCT raw_sender_id
-            FROM copilot.message_sources
-            WHERE account_id = @account_id
-              AND conversation_id = @conversation_id
-              AND identity_namespace = @identity_namespace
-              AND message_table = @message_table
-              AND shard_fingerprint = @shard_fingerprint
-              AND raw_sender_id IS NOT NULL
-              AND match_status IN ('Created', 'Matched');
-            """;
-        await using var command = new NpgsqlCommand(sql, connection, transaction);
-        command.Parameters.AddWithValue("account_id", scope.AccountId);
-        command.Parameters.AddWithValue("conversation_id", scope.ConversationId);
-        command.Parameters.AddWithValue("identity_namespace", scope.IdentityNamespace!);
-        command.Parameters.AddWithValue("message_table", scope.MessageTable!);
-        command.Parameters.AddWithValue("shard_fingerprint", scope.ShardFingerprint!);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-
-        var observed = new List<ScopedSenderIdentityV1>();
-        while (await reader.ReadAsync(cancellationToken))
-        {
-            observed.Add(new ScopedSenderIdentityV1(scope, reader.GetString(0)));
-        }
-
-        return observed;
-    }
-
-    private static async Task<SenderPerspectiveV1?> ReadCalibrationAsync(
-        NpgsqlConnection connection,
-        NpgsqlTransaction transaction,
-        SenderCalibrationScopeV1 scope,
-        CancellationToken cancellationToken)
-    {
-        const string sql = """
-            SELECT calibration_version, perspective_state, evidence, account_self_raw_sender_id, contact_raw_sender_id
-            FROM copilot.sender_calibrations
-            WHERE account_id = @account_id
-              AND conversation_id = @conversation_id
-              AND identity_namespace = @identity_namespace
-              AND message_table = @message_table
-              AND shard_fingerprint = @shard_fingerprint
-            FOR UPDATE;
-            """;
-        await using var command = new NpgsqlCommand(sql, connection, transaction);
-        command.Parameters.AddWithValue("account_id", scope.AccountId);
-        command.Parameters.AddWithValue("conversation_id", scope.ConversationId);
-        command.Parameters.AddWithValue("identity_namespace", scope.IdentityNamespace!);
-        command.Parameters.AddWithValue("message_table", scope.MessageTable!);
-        command.Parameters.AddWithValue("shard_fingerprint", scope.ShardFingerprint!);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken))
-        {
-            return null;
-        }
-
-        var version = reader.GetInt64(0);
-        var state = Enum.Parse<PerspectiveStateV1>(reader.GetString(1), ignoreCase: false);
-        var evidence = reader.IsDBNull(2)
-            ? (PerspectiveEvidenceV1?)null
-            : Enum.Parse<PerspectiveEvidenceV1>(reader.GetString(2), ignoreCase: false);
-        return new SenderPerspectiveV1(
-            scope,
-            state,
-            evidence,
-            reader.IsDBNull(3) ? null : reader.GetString(3),
-            reader.IsDBNull(4) ? null : reader.GetString(4),
-            version);
-    }
-
-    private static SenderPerspectiveV1 ChooseNextCalibration(
-        SenderPerspectiveV1? current,
-        SenderPerspectiveV1 computed)
-    {
-        if (current is null)
-        {
-            return computed with { CalibrationVersion = 1 };
-        }
-
-        var sameMapping = current.State == computed.State
-            && current.Evidence == computed.Evidence
-            && string.Equals(current.AccountSelfRawSenderId, computed.AccountSelfRawSenderId, StringComparison.Ordinal)
-            && string.Equals(current.ContactRawSenderId, computed.ContactRawSenderId, StringComparison.Ordinal);
-        return sameMapping
-            ? current
-            : computed with { CalibrationVersion = current.CalibrationVersion + 1 };
-    }
-
-    private static async Task SaveCalibrationAsync(
-        NpgsqlConnection connection,
-        NpgsqlTransaction transaction,
-        SenderPerspectiveV1 perspective,
-        CancellationToken cancellationToken)
-    {
-        const string sql = """
-            INSERT INTO copilot.sender_calibrations(
-                account_id,
-                conversation_id,
-                identity_namespace,
-                message_table,
-                shard_fingerprint,
-                account_self_raw_sender_id,
-                contact_raw_sender_id,
-                calibration_version,
-                perspective_state,
-                evidence,
-                confirmed_at)
-            VALUES (
-                @account_id,
-                @conversation_id,
-                @identity_namespace,
-                @message_table,
-                @shard_fingerprint,
-                @self_sender_id,
-                @contact_sender_id,
-                @calibration_version,
-                @perspective_state,
-                @evidence,
-                NULL)
-            ON CONFLICT DO NOTHING;
-            """;
-        await using var command = new NpgsqlCommand(sql, connection, transaction);
-        command.Parameters.AddWithValue("account_id", perspective.Scope.AccountId);
-        command.Parameters.AddWithValue("conversation_id", perspective.Scope.ConversationId);
-        command.Parameters.AddWithValue("identity_namespace", perspective.Scope.IdentityNamespace!);
-        command.Parameters.AddWithValue("message_table", perspective.Scope.MessageTable!);
-        command.Parameters.AddWithValue("shard_fingerprint", perspective.Scope.ShardFingerprint!);
-        AddNullableText(command, "self_sender_id", perspective.AccountSelfRawSenderId);
-        AddNullableText(command, "contact_sender_id", perspective.ContactRawSenderId);
-        command.Parameters.AddWithValue("calibration_version", perspective.CalibrationVersion);
-        command.Parameters.AddWithValue("perspective_state", perspective.State.ToString());
-        AddNullableText(command, "evidence", perspective.Evidence?.ToString());
-        var inserted = await command.ExecuteNonQueryAsync(cancellationToken);
-        if (inserted == 0)
-        {
-            await UpdateExistingCalibrationAsync(connection, transaction, perspective, cancellationToken);
-        }
-    }
-
-    private static async Task UpdateExistingCalibrationAsync(
-        NpgsqlConnection connection,
-        NpgsqlTransaction transaction,
-        SenderPerspectiveV1 perspective,
-        CancellationToken cancellationToken)
-    {
-        const string sql = """
-            UPDATE copilot.sender_calibrations
-            SET account_self_raw_sender_id = @self_sender_id,
-                contact_raw_sender_id = @contact_sender_id,
-                calibration_version = @calibration_version,
-                perspective_state = @perspective_state,
-                evidence = @evidence,
-                confirmed_at = NULL,
-                updated_at = now()
-            WHERE account_id = @account_id
-              AND conversation_id = @conversation_id
-              AND identity_namespace = @identity_namespace
-              AND message_table = @message_table
-              AND shard_fingerprint = @shard_fingerprint
-              AND perspective_state <> 'Confirmed';
-            """;
-        await using var command = new NpgsqlCommand(sql, connection, transaction);
-        AddNullableText(command, "self_sender_id", perspective.AccountSelfRawSenderId);
-        AddNullableText(command, "contact_sender_id", perspective.ContactRawSenderId);
-        command.Parameters.AddWithValue("calibration_version", perspective.CalibrationVersion);
-        command.Parameters.AddWithValue("perspective_state", perspective.State.ToString());
-        AddNullableText(command, "evidence", perspective.Evidence?.ToString());
-        command.Parameters.AddWithValue("account_id", perspective.Scope.AccountId);
-        command.Parameters.AddWithValue("conversation_id", perspective.Scope.ConversationId);
-        command.Parameters.AddWithValue("identity_namespace", perspective.Scope.IdentityNamespace!);
-        command.Parameters.AddWithValue("message_table", perspective.Scope.MessageTable!);
-        command.Parameters.AddWithValue("shard_fingerprint", perspective.Scope.ShardFingerprint!);
-        await command.ExecuteNonQueryAsync(cancellationToken);
-    }
-
-    private static async Task ReprojectMessagesAsync(
-        NpgsqlConnection connection,
-        NpgsqlTransaction transaction,
-        SenderPerspectiveV1 perspective,
-        CancellationToken cancellationToken)
-    {
-        const string sql = """
-            WITH scoped_senders AS (
-                SELECT
-                    message_id,
-                    CASE WHEN count(DISTINCT raw_sender_id) = 1 THEN max(raw_sender_id) ELSE NULL END AS raw_sender_id
-                FROM copilot.message_sources
-                WHERE account_id = @account_id
-                  AND conversation_id = @conversation_id
-                  AND identity_namespace = @identity_namespace
-                  AND message_table = @message_table
-                  AND shard_fingerprint = @shard_fingerprint
-                  AND message_id IS NOT NULL
-                  AND match_status IN ('Created', 'Matched')
-                GROUP BY message_id
-            )
-            UPDATE copilot.chat_messages AS message
-            SET direction = CASE
-                    WHEN @perspective_state = 'Unresolved' OR scoped_senders.raw_sender_id IS NULL THEN 'Unknown'
-                    WHEN scoped_senders.raw_sender_id = @self_sender_id THEN 'Outgoing'
-                    WHEN scoped_senders.raw_sender_id = @contact_sender_id THEN 'Incoming'
-                    ELSE 'Unknown'
-                END,
-                direction_evidence = CASE
-                    WHEN @perspective_state = 'Unresolved' OR scoped_senders.raw_sender_id IS NULL THEN 'Unresolved'
-                    WHEN scoped_senders.raw_sender_id NOT IN (@self_sender_id, @contact_sender_id) THEN 'Unresolved'
-                    ELSE @direction_evidence
-                END
-            FROM scoped_senders
-            WHERE message.id = scoped_senders.message_id
-              AND message.account_id = @account_id;
-            """;
-        await using var command = new NpgsqlCommand(sql, connection, transaction);
-        command.Parameters.AddWithValue("account_id", perspective.Scope.AccountId);
-        command.Parameters.AddWithValue("conversation_id", perspective.Scope.ConversationId);
-        command.Parameters.AddWithValue("identity_namespace", perspective.Scope.IdentityNamespace!);
-        command.Parameters.AddWithValue("message_table", perspective.Scope.MessageTable!);
-        command.Parameters.AddWithValue("shard_fingerprint", perspective.Scope.ShardFingerprint!);
-        command.Parameters.AddWithValue("perspective_state", perspective.State.ToString());
-        AddNullableText(command, "self_sender_id", perspective.AccountSelfRawSenderId);
-        AddNullableText(command, "contact_sender_id", perspective.ContactRawSenderId);
-        command.Parameters.AddWithValue("direction_evidence", perspective.Evidence switch
-        {
-            PerspectiveEvidenceV1.DefaultSmallSenderId => DirectionEvidenceV1.DefaultSmallSenderId.ToString(),
-            PerspectiveEvidenceV1.UserConfirmed => DirectionEvidenceV1.UserConfirmed.ToString(),
-            _ => DirectionEvidenceV1.Unresolved.ToString()
-        });
-        await command.ExecuteNonQueryAsync(cancellationToken);
-    }
-
     private static async Task UpdateConversationCursorAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
@@ -1468,29 +1329,6 @@ public sealed class PostgresMessageIngestionService(NpgsqlDataSource dataSource)
 
     private static string ToCursor(Guid messageId) => messageId.ToString("N");
 
-    internal static async Task AcquireScopeLockAsync(
-        NpgsqlConnection connection,
-        NpgsqlTransaction transaction,
-        SenderCalibrationScopeV1 scope,
-        CancellationToken cancellationToken)
-    {
-        var namespaceValue = scope.IdentityNamespace!;
-        var lockKey = string.Concat(
-            scope.AccountId.ToString("N"),
-            ":",
-            scope.ConversationId.ToString("N"),
-            ":",
-            namespaceValue.Length.ToString(CultureInfo.InvariantCulture),
-            ":",
-            namespaceValue);
-        await using var command = new NpgsqlCommand(
-            "SELECT pg_advisory_xact_lock(hashtextextended(@scope_key, 0));",
-            connection,
-            transaction);
-        command.Parameters.AddWithValue("scope_key", lockKey);
-        await command.ExecuteScalarAsync(cancellationToken);
-    }
-
     private static IngestReceiptV1 NeedsReview(string reasonCode) => new()
     {
         MatchStatus = MatchStatusV1.NeedsReview,
@@ -1524,5 +1362,9 @@ public sealed class PostgresMessageIngestionService(NpgsqlDataSource dataSource)
         string MessageType,
         string? TextContent);
 
-    private sealed record CalibrationRefreshResult(bool Changed, long Version);
+}
+
+public sealed class ReaderAccountIdentityConflictException()
+    : InvalidOperationException("The configured Reader account directory is already bound to another WeChat wxid.")
+{
 }

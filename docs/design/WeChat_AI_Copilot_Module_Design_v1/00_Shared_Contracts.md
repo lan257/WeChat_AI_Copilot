@@ -1,5 +1,7 @@
 # 跨模块共享数据契约（Contracts v1）
 
+> 2026-10-20 实施更新：发送方向改为按消息分片 `Name2Id` 解析 `senderWxid`，再与账号 wxid 比较。本文原有的小 ID 默认和人工互换流程已被《WeChat_Automatic_Sender_Identity_Implementation_Spec.md》取代；遇到身份缺失时必须保持 `Unknown`。
+
 > 状态：**拟冻结的首版开发契约**；供六个模块并行实现和评审，未表示现有 API 已全部存在。  
 > 基线：[总体架构设计](Overall_Architecture_Reference.md) v1.0-Draft，2026-10-09。
 > 冻结原则：语义先冻结，API 路径/字段名称允许经联合评审做一次协调；之后实行版本化变更。
@@ -20,9 +22,9 @@
 | `accountId` | 后端内部分配的不可变 ID；外部读取器账号 ID 另存 `accountExternalId` | M2 |
 | `conversationId` | 后端会话 ID；外部 `conversationExternalId` 在账号范围内映射 | M2 |
 | `messageId` | 内部消息 ID；与微信源 ID 分离 | M2 |
-| `sourceIdentity` | 尽可能保存原始键：`localId`、`sortSeq`、`serverId`、`shardFingerprint`、`messageTable`，不可编造缺失值 | M1 生成、M2 保存 |
-| `externalMessageId` | 兼容已验证 `wx4:` + SHA-256(`account|conversation|local_id|sort_seq`)；**不静默改变旧规则** | M2 解释与索引 |
-| `contextRevision` | 不透明版本标记；至少随会话最新消息/有效校准变化更新；由服务端提供，不由浏览器构造 | M3 计算/M4 回传 |
+| `sourceIdentity` | 尽可能保存原始键：`localId`、`sortSeq`、`serverId`、原始 `shard`、`shardFingerprint`、`messageTable`；消息还保存 `rawSenderId` / `senderWxid`，不可编造缺失值 | M1 生成、M2 保存 |
+| `externalMessageId` | `wx4:` + SHA-256(账号 wxid/账号目录、会话、分片指纹、消息表、`localId`)；同一 `localId` 跨分片不冲突 | M1/M2 共同校验 |
+| `contextRevision` | 不透明版本标记；至少随会话消息/身份解析变化更新；由服务端提供，不由浏览器构造 | M3 计算/M4 回传 |
 | `batchId` / `threadId` / `runId` | M4 内部产生；必须携带不可变 `accountId + conversationId` 作用域 | M4 |
 | 时间字段 | API UTC ISO 8601；`sourceOccurredAt` 可空；UI 负责当地时区展示 | 各模块 |
 
@@ -32,10 +34,10 @@
 - `conversationType`: 基础版 `Direct`（其它类型暂拒绝或显式不支持）
 - `messageType`: 基础版 `Text`（其它类型原样标记，不假装解析）
 - `direction`: `Incoming` / `Outgoing` / `Unknown`
-- `directionEvidence`: `Unresolved` / `DefaultSmallSenderId` / `UserConfirmed` / `SourceConfirmed`；小 ID 默认只产生待确认方向，只有 `UserConfirmed` 后才能将消息用于参与者画像更新。枚举属于新设计，不等于 POC 现有枚举已实现。
-- `perspectiveState`: `Unresolved` / `PendingConfirmation` / `Confirmed`；小 ID 初始化值必须是待确认状态。
-- `profileStatus`: `WaitingForConfirmation` / `FirstConsolidation` / `Accumulating` / `Consolidating` / `Rebuilding` / `Current` / `Failed`。
-- `memoryOrigin`: `UserEntered` / `MessageExtracted`；人工记录立即持久化，只有消息抽取记忆进入画像共用的确认门控与滑动窗口。
+- `directionEvidence`: 新消息使用 `Unresolved` / `SourceConfirmed`。旧库里的 `DefaultSmallSenderId` / `UserConfirmed` 仅为兼容值，不作为新方向证据。
+- `perspectiveState`: 兼容字段；`Confirmed` 表示账号目录已经绑定可验证的账号 wxid，`Unresolved` 表示该账号身份未就绪，不要求会话级人工确认。
+- `profileStatus`: 保留 `WaitingForConfirmation` 作为兼容状态值；它表示账号 wxid 尚不可用，而非要求用户逐会话确认。其它值包括 `FirstConsolidation` / `Accumulating` / `Consolidating` / `Rebuilding` / `Current` / `Failed`。
+- `memoryOrigin`: `UserEntered` / `MessageExtracted`；人工记录立即持久化，消息抽取记忆只使用 `SourceConfirmed` 方向。
 - `matchStatus`: `Matched` / `Created` / `NeedsReview`
 - `historyJobStatus`: `Pending` / `Running` / `Completed` / `Partial` / `Failed` / `Cancelled`
 - `agentRunStatus`: `Queued` / `Running` / `Completed` / `Failed` / `Cancelled`
@@ -90,42 +92,14 @@
 - 实时和历史均走 M2 同一入库/去重入口。**禁止按正文相似度去重、禁止因导入源缺失而删除旧消息**。
 - 跨 shard 或来源字段缺失导致外部键不可信时，应 `NeedsReview`，不能错误使用相同 `wx4:` 直接覆盖。
 
-## 4. D03/D04/D10：会话查询、校准和通知
+## 4. D03/D04/D10：会话查询、方向解析和通知
 
-```json
-{
-  "conversationId": "internal-conversation-id",
-  "accountId": "internal-account-id",
-  "displayName": "联系人（仅展示名）",
-  "conversationType": "Direct",
-  "lastMessageCursor": "opaque-cursor",
-  "calibrationVersion": 2,
-  "perspectiveState": "PendingConfirmation",
-  "effectiveSelfRawSenderId": "1",
-  "perspectiveEvidence": "DefaultSmallSenderId",
-  "captureState": "Inactive"
-}
-```
-
-`SetWeChatAccountPerspectiveRequestV1`：
-
-```json
-{"accountId":"internal-account-id","conversationId":"internal-conversation-id","identityNamespace":"scoped-namespace","accountSelfRawSenderId":"sender-option-a","expectedCalibrationVersion":2}
-```
-
-`SetWeChatAccountPerspectiveResultV1`：
-
-```json
-{"accountId":"internal-account-id","conversationId":"internal-conversation-id","identityNamespace":"scoped-namespace","calibrationVersion":3,"mapping":{"accountSelfRawSenderId":"sender-option-a","contactRawSenderId":"sender-option-b"},"evidence":"UserConfirmed","affectedMessageCount":42}
-```
-
-- **仅在同一有效身份范围恰有两个不同的非负十进制 sender ID 时生成默认视角**；默认较小 ID 为本人，状态为 `PendingConfirmation`、证据为 `DefaultSmallSenderId`。非数字、相同、多方冲突或作用域不清时为 `Unknown`。
-- M5 显示默认本人 ID，提供“互换身份”（仅切换 UI 预览候选）和“确认身份”（提交当前预览候选）两个独立操作。预览不得调用持久化校准命令或影响消息方向/画像/记忆；只有确认身份才提交明确的 `accountSelfRawSenderId`。手动确认前允许显示带“默认/待确认”标记的临时方向，但 M3 不更新画像或消息抽取记忆，M4 不把临时方向作为本人/联系人写作风格证据。
-- 用户确认后，`perspectiveState=Confirmed`、证据为 `UserConfirmed`。请求携带 `expectedCalibrationVersion` 和 `Idempotency-Key`；同一选择重试幂等，版本不符返回 `409`。已确认覆盖优先于小 ID 默认，读取器刷新不得重置。
-- M2 不修改消息的 `rawSenderId`；确认身份后对有效范围方向重新投影，触发 `conversation.perspective-changed`、`conversation.perspective-confirmed` 和上下文版本更新。M3 仅消费确认事件启动首次沉淀或新视角重建；单纯预览不发布领域事件。
-- 版本字段统一使用 `calibrationVersion`：它就是画像归属所依赖的当前视角版本，M3 不另设独立 `perspectiveVersion` 计数器。
-- `message.created`、`conversation.perspective-changed`、`conversation.perspective-confirmed` 通知只携带 `accountId`、`conversationId`、`messageCursor`/`calibrationVersion`，Web 再按需拉取正文；**成功持久化后才发通知**。方向确认事件应在校准映射和方向投影事务提交后发出。
-
+- 会话范围仍由账号 UUID、会话 UUID 和 Web token 约束；浏览器切换会话不改变 Reader 监听目标。
+- `RawMessageEventV1` 携带 `accountWxid`、`senderWxid`、`rawSenderId`，且 `sourceIdentity` 保留 `shard`、`shardFingerprint`、`messageTable` 与消息 ID。API 忽略事件传入的方向枚举并按已绑定账号 wxid 重新计算。
+- 本人 wxid 与消息发送者 wxid 相等时写入 `Outgoing` / `SourceConfirmed`；两个可信 wxid 不同时写入 `Incoming` / `SourceConfirmed`；身份缺失时写入 `Unknown` / `Unresolved`。
+- 账号外部 ID 已绑定到不同 wxid 时返回 `409 READER_ACCOUNT_WXID_CONFLICT`，不跨账号合并。
+- 新方向解析使旧消息从 `Unknown` 变为可信方向时递增会话修订，并发出 `message.identity-resolved`；记忆侧按新持久化方向重新采集。
+- 当前 Web API 没有 sender-perspective 读取或写入端点。旧 `sender_calibrations` 仅为过渡兼容存储，不驱动新消息方向。
 ## 5. D05/D06：消息查询、记忆与上下文
 
 `ContextRequestV1`：
@@ -155,7 +129,7 @@
 }
 ```
 
-- M2 只提供已授权消息查询；M3 对画像版本、画像/自动长期记忆共用的未沉淀文本计数和高水位游标、上下文数量、证据裁剪及记忆优先级负责；M4 只读使用。画像主体为微信参与者（`WechatAccount` 或 `Contact`），不是当前 Web 登录用户；`PendingConfirmation` 期间不更新画像或消息抽取记忆，M3 不将临时方向当作任何一方的写作风格证据。首次身份确认后立即执行第一次沉淀；之后同一账号/会话/namespace/calibrationVersion 中方向已确认的 Direct/Text 未沉淀文本，先将 CRLF/CR 规范为 LF，再按 Unicode 码点累计（不裁剪首尾空格），严格超过 5,000 字符时由 M3 一次处理共享窗口内全部新文本并推进共享游标。此流程由新消息事件驱动阈值检查，不使用定时任务或手动强制刷新。
+- M2 只提供已授权消息查询；M3 对画像版本、画像/自动长期记忆共用的未沉淀文本计数和高水位游标、上下文数量、证据裁剪及记忆优先级负责；M4 只读使用。画像主体为微信参与者（`WechatAccount` 或 `Contact`），不是当前 Web 登录用户；只有 `SourceConfirmed` 的 Direct/Text 消息可以分配到本人/联系人并进入相应画像或消息抽取记忆。方向未知时仅作中性检索。首次账号 wxid 绑定后可开始第一次沉淀；后续同一账号/会话的未沉淀文本按源版本累计，严格超过 5,000 字符时由 M3 一次处理共享窗口内全部新文本并推进共享游标。此流程由新消息事件驱动阈值检查，不使用定时任务或手动强制刷新。
 - M4 工具调用使用**后端注入的账号/会话约束**，模型无法传入任意可访问其它联系人的账号 ID；返回证据 ID 而非整库内容。
 - 对空结果、历史不完整、校准未知、检索截断等情况，`omissions` 应显式标注；不可在 AI 层默默补事实。
 
@@ -211,7 +185,7 @@
 {"error":{"code":"CONVERSATION_NOT_AUTHORIZED","message":"当前会话不可访问","retryable":false,"correlationId":"trace-id"}}
 ```
 
-统一语义：`400` 格式错误，`401` 未认证，`403` 越权，`404` 资源不存在或不可见，`409` 校准版本冲突/状态冲突，`422` 不满足两方 sender 前提，`429` Agent 预算/限流，`503` 读取器或 Agent 不可用。错误信息不能泄漏私聊正文或隐藏账号身份。
+统一语义：`400` 格式错误，`401` 未认证，`403` 越权，`404` 资源不存在或不可见，`409` 账号 wxid 绑定冲突/状态冲突，`429` Agent 预算/限流，`503` 读取器或 Agent 不可用。错误信息不能泄漏私聊正文或隐藏账号身份。
 
 **并行开发冻结流程**：
 

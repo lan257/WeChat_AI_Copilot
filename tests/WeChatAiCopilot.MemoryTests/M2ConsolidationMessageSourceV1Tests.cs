@@ -25,7 +25,7 @@ public sealed class M2ConsolidationMessageSourceV1Tests
                 Text = "sample",
                 MessageType = "Text",
                 Direction = MessageDirectionV1.Incoming,
-                DirectionEvidence = DirectionEvidenceV1.UserConfirmed
+                DirectionEvidence = DirectionEvidenceV1.SourceConfirmed
             }
         };
         var snapshot = new MessageQuerySnapshotV1

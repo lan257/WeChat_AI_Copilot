@@ -511,7 +511,7 @@ public sealed class ContextToolSessionV1Tests
         Text = text,
         OccurredAt = DateTimeOffset.Parse("2026-10-10T00:00:00Z"),
         Direction = MessageDirectionV1.Incoming,
-        DirectionEvidence = DirectionEvidenceV1.UserConfirmed
+        DirectionEvidence = DirectionEvidenceV1.SourceConfirmed
     };
 
     private sealed class FakeMessageQuery : IMessageQueryV1

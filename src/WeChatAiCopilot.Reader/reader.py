@@ -27,6 +27,7 @@ from typing import Any, Iterator
 READER_ROOT = Path(__file__).resolve().parent
 RUNTIME_ROOT = READER_ROOT / ".runtime"
 PROVIDER = "local-wechat"
+PINNED_WECHATAUTO_VERSION = "1.2.7.0"
 MIN_SOURCE_EPOCH = 946684800
 MAX_SOURCE_EPOCH = 4102444800
 MAX_HISTORY_ROWS = 5000
@@ -200,6 +201,13 @@ def _import_readonly_module() -> Any:
         module = importlib.import_module("wechatauto.db")
     except Exception:
         raise ReaderFailure("READONLY_DATABASE_MODULE_UNAVAILABLE") from None
+    try:
+        upstream_metadata = (package_root / "UPSTREAM.txt").read_text(encoding="utf-8")
+    except OSError:
+        upstream_metadata = ""
+    if (f"PyPI release: {PINNED_WECHATAUTO_VERSION}" not in upstream_metadata
+            or not callable(getattr(getattr(module, "WeChatDB", None), "sender_username", None))):
+        raise ReaderFailure("READER_UPSTREAM_SENDER_RESOLUTION_UNAVAILABLE")
     if FORBIDDEN_MODULES.intersection(sys.modules):
         raise ReaderFailure("READONLY_MODULE_BOUNDARY_VIOLATION")
     return module
@@ -661,6 +669,10 @@ def _open_database(settings: dict[str, Any], db_module: Any) -> tuple[Any, Path]
             )
             if str(database.account) != settings["accountExternalId"]:
                 raise ReaderFailure("ACTIVE_ACCOUNT_MISMATCH")
+            self_wxid = _verified_self_wxid(database)
+            if not self_wxid:
+                raise ReaderFailure("SELF_WXID_UNAVAILABLE")
+            settings["accountWxid"] = self_wxid
             conversation_ids = {
                 str(row.get("username") or "").strip()
                 for row in database.get_sessions(limit=2000)
@@ -930,17 +942,80 @@ def _shard_fingerprint(account: str, connection: sqlite3.Connection) -> str | No
     return hashlib.sha256(f"wechat-local\0{account}\0{relative}".encode("utf-8")).hexdigest()
 
 
+def _verified_self_wxid(database: Any) -> str:
+    """Bind sender identity to the selected account directory and its contact database."""
+    account_wxid = str(getattr(database, "wxid", "") or "").strip()
+    try:
+        with _quiet_upstream_output():
+            self_info = database.get_self_info()
+    except Exception:
+        return ""
+    if not isinstance(self_info, dict):
+        return ""
+    reported_wxid = str(self_info.get("username") or "").strip()
+    return account_wxid if account_wxid and reported_wxid == account_wxid else ""
+
+
+def _upstream_shard_name(shard: Any) -> str | None:
+    """Normalize public shard labels to the cache label accepted by sender_username()."""
+    value = str(shard or "").strip().replace("\\", "/")
+    if not value:
+        return None
+    name = value.rsplit("/", 1)[-1]
+    candidate = name[len("message__"):] if name.startswith("message__") else name
+    if not re.fullmatch(r"message_\d+\.db", candidate, re.IGNORECASE):
+        return None
+    return "message__" + candidate
+
+
+def resolve_direction(
+    *,
+    self_wxid: Any,
+    shard: Any,
+    sender_id: Any,
+    db: Any,
+    sender_wxid: Any = None,
+) -> tuple[str, str | None]:
+    """Resolve Self/Peer only from stable wxids and the message's own shard."""
+    resolved_sender = str(sender_wxid or "").strip()
+    shard_name = _upstream_shard_name(shard)
+    if not resolved_sender and shard_name and sender_id not in (None, "") and db is not None:
+        resolver = getattr(db, "sender_username", None)
+        if callable(resolver):
+            try:
+                with _quiet_upstream_output():
+                    resolved_sender = str(resolver(shard_name, sender_id) or "").strip()
+            except Exception:
+                resolved_sender = ""
+
+    account_wxid = str(self_wxid or "").strip()
+    if not account_wxid or not resolved_sender:
+        return "Unknown", resolved_sender or None
+    return ("Self" if resolved_sender == account_wxid else "Peer"), resolved_sender
+
+
+def _external_message_id(
+    settings: dict[str, Any],
+    source_identity: dict[str, str | None],
+) -> str | None:
+    values = (
+        settings.get("accountWxid"),
+        settings.get("accountExternalId"),
+        settings.get("conversationExternalId"),
+        source_identity.get("shardFingerprint"),
+        source_identity.get("messageTable"),
+        source_identity.get("localId"),
+    )
+    if any(not isinstance(value, str) or not value for value in values):
+        return None
+    stable_key = "\0".join(values)
+    return "wx4:" + hashlib.sha256(stable_key.encode("utf-8")).hexdigest()
+
+
 def _identity_namespace(account: str, conversation: str, shard: str | None, table: str | None) -> str:
     parts = [account, conversation, shard or "unknown-shard", table or "unknown-table"]
     stable_scope = json.dumps(parts, ensure_ascii=False, separators=(",", ":"))
     return "wechat-local-sender.v1:" + hashlib.sha256(stable_scope.encode("utf-8")).hexdigest()
-
-
-def _external_message_id(account: str, conversation: str, local_id: Any, sort_seq: Any) -> str | None:
-    if local_id is None or sort_seq is None:
-        return None
-    stable_key = "|".join((account, conversation, str(local_id or ""), str(sort_seq or "")))
-    return "wx4:" + hashlib.sha256(stable_key.encode("utf-8")).hexdigest()
 
 
 def _message_type(source_type: Any) -> str:
@@ -949,7 +1024,8 @@ def _message_type(source_type: Any) -> str:
     return MESSAGE_TYPES.get(str(source_type), "Other")
 
 
-def _raw_event(
+def _normalize_message(
+    database: Any,
     settings: dict[str, Any],
     source_kind: str,
     row: dict[str, Any],
@@ -960,36 +1036,54 @@ def _raw_event(
     content = row.get("content")
     text = content if message_type == "Text" and isinstance(content, str) else None
     table = source_identity.get("messageTable")
-    shard = source_identity.get("shardFingerprint")
+    shard_fingerprint = source_identity.get("shardFingerprint")
     local_id = source_identity.get("localId")
     sort_seq = source_identity.get("sortSeq")
+    direction, sender_wxid = resolve_direction(
+        self_wxid=settings.get("accountWxid"),
+        shard=source_identity.get("shard") or row.get("shard"),
+        sender_id=row.get("sender_id"),
+        db=database,
+        sender_wxid=row.get("sender_username"),
+    )
     return {
         "schemaVersion": 1,
         "provider": PROVIDER,
         "sourceKind": source_kind,
         "accountExternalId": settings["accountExternalId"],
+        "accountWxid": settings.get("accountWxid"),
         "conversationExternalId": settings["conversationExternalId"],
         "conversationType": "Direct",
         "messageType": message_type,
         "text": text,
         "sourceOccurredAt": _utc_text(source_time),
         "rawSenderId": _as_string(row.get("sender_id")),
+        "senderWxid": sender_wxid,
         "identityNamespace": _identity_namespace(
-            settings["accountExternalId"], settings["conversationExternalId"], shard, table
+            settings["accountExternalId"], settings["conversationExternalId"], shard_fingerprint, table
         ),
         "sourceIdentity": {
             "localId": local_id,
             "sortSeq": sort_seq,
             "serverId": source_identity.get("serverId"),
-            "shardFingerprint": shard,
+            "shard": source_identity.get("shard"),
+            "shardFingerprint": shard_fingerprint,
             "messageTable": table,
         },
-        "externalMessageId": _external_message_id(
-            settings["accountExternalId"], settings["conversationExternalId"], local_id, sort_seq
-        ),
-        "direction": "Unknown",
-        "directionEvidence": "Unresolved",
+        "externalMessageId": _external_message_id(settings, source_identity),
+        "direction": {"Self": "Outgoing", "Peer": "Incoming"}.get(direction, "Unknown"),
+        "directionEvidence": "SourceConfirmed" if direction != "Unknown" else "Unresolved",
     }
+
+
+def _raw_event(
+    settings: dict[str, Any],
+    source_kind: str,
+    row: dict[str, Any],
+    source_identity: dict[str, str | None],
+) -> dict[str, Any]:
+    """Compatibility wrapper for offline fixture callers; production uses the shared normalizer."""
+    return _normalize_message(None, settings, source_kind, row, source_identity)
 
 
 def _source_identity_from_raw(
@@ -998,20 +1092,24 @@ def _source_identity_from_raw(
     table: str,
     raw: Any,
 ) -> dict[str, str | None]:
+    shard_relative = _shard_relative_name(connection)
     return {
         "localId": _as_string(raw["local_id"]),
         "sortSeq": _as_string(raw["sort_seq"]),
         "serverId": _as_string(raw["server_id"]),
+        "shard": Path(shard_relative or "").name or None,
         "shardFingerprint": _shard_fingerprint(account, connection),
         "messageTable": table,
     }
 
 
 def _realtime_source_identity(database: Any, settings: dict[str, Any], row: dict[str, Any]) -> dict[str, str | None]:
+    upstream_shard = _upstream_shard_name(row.get("shard"))
     identity: dict[str, str | None] = {
         "localId": _as_string(row.get("local_id")),
         "sortSeq": _as_string(row.get("sort_seq")),
         "serverId": None,
+        "shard": upstream_shard[len("message__"):] if upstream_shard else None,
         "shardFingerprint": None,
         "messageTable": None,
     }
@@ -1129,7 +1227,7 @@ def _run_realtime(settings: dict[str, Any], db_module: Any) -> None:
                 def on_message(row: dict[str, Any], _listener: Any) -> None:
                     try:
                         identity = _realtime_source_identity(database, scoped_settings, row)
-                        event = _raw_event(scoped_settings, "Realtime", row, identity)
+                        event = _normalize_message(database, scoped_settings, "Realtime", row, identity)
                         if settings["transport"]["enabled"]:
                             _post_contract(settings, "/api/reader/messages", "RawMessageEventV1", event)
                         else:
@@ -1351,7 +1449,7 @@ def _read_history(
                         events_streamed += 1
                         if events_streamed > HISTORY_JOB_ROW_GUARD:
                             raise ReaderFailure("HISTORY_JOB_ROW_GUARD_EXCEEDED")
-                        yield _raw_event(settings, "HistoryBackfill", normalized, identity)
+                        yield _normalize_message(database, settings, "HistoryBackfill", normalized, identity)
                     last_id = raw_rows[-1]["local_id"]
                     try:
                         cursor = int(last_id)

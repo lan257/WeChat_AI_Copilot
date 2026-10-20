@@ -86,7 +86,7 @@ public sealed class AgentTaskCoordinatorV1Tests
         Assert.Equal(MessageId.ToString("D"), mappedMessage.MessageId);
         Assert.Equal("the authorized recent message", mappedMessage.Text);
         Assert.Equal(MessageDirectionV1.Incoming, mappedMessage.Direction);
-        Assert.Equal(DirectionEvidenceV1.UserConfirmed, mappedMessage.DirectionEvidence);
+        Assert.Equal(DirectionEvidenceV1.SourceConfirmed, mappedMessage.DirectionEvidence);
         Assert.Equal(nameof(ContextOmissionCodeV1.HistoryCoveragePartial), Assert.Single(runtimeRequest.Context.Omissions));
 
         Assert.Equal("m3-context-r42", batch.ContextRevision);
@@ -519,7 +519,7 @@ public sealed class AgentTaskCoordinatorV1Tests
                 Text = "the authorized recent message",
                 OccurredAt = DateTimeOffset.UtcNow,
                 Direction = MessageDirectionV1.Incoming,
-                DirectionEvidence = DirectionEvidenceV1.UserConfirmed
+                DirectionEvidence = DirectionEvidenceV1.SourceConfirmed
             }
         ],
         ParticipantProfiles = profiles ?? [],

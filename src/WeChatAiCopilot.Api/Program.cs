@@ -90,7 +90,6 @@ app.MapReaderManagementEndpointsV1(builder.Configuration);
 app.MapSystemStatusEndpointsV1(builder.Configuration);
 app.MapReaderDiscoveryEndpointsV1(builder.Configuration);
 app.MapWebConversationQueryEndpoints(builder.Configuration);
-app.MapSenderCalibrationCommandEndpoint(builder.Configuration);
 app.MapMemoryEndpoints(builder.Configuration);
 app.MapAgentEndpoints(builder.Configuration);
 if(formalDataSource is not null)

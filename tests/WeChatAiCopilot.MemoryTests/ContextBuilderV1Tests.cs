@@ -267,7 +267,7 @@ public sealed class ContextBuilderV1Tests
         MessageId = messageId,
         Text = text,
         Direction = MessageDirectionV1.Incoming,
-        DirectionEvidence = DirectionEvidenceV1.UserConfirmed
+        DirectionEvidence = DirectionEvidenceV1.SourceConfirmed
     };
 
     private MemoryItemV1 CreateMemoryItem(

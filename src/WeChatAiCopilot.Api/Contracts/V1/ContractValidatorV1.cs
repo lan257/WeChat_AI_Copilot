@@ -22,6 +22,8 @@ public static class ContractValidatorV1
         Require(message.AccountExternalId, "accountExternalId", violations);
         Require(message.ConversationExternalId, "conversationExternalId", violations);
         Require(message.IdentityNamespace, "identityNamespace", violations);
+        ValidateOptionalIdentifier(message.AccountWxid, "accountWxid", 512, violations);
+        ValidateOptionalIdentifier(message.SenderWxid, "senderWxid", 512, violations);
 
         if (!string.Equals(message.ConversationType, "Direct", StringComparison.Ordinal))
         {
@@ -43,6 +45,10 @@ public static class ContractValidatorV1
         if (message.SourceIdentity is null)
         {
             violations.Add(new("SOURCE_IDENTITY_REQUIRED", "sourceIdentity", "Source identity details must be provided, even when individual values are unknown."));
+        }
+        else
+        {
+            ValidateOptionalIdentifier(message.SourceIdentity.Shard, "sourceIdentity.shard", 128, violations);
         }
 
         return violations;
@@ -152,6 +158,19 @@ public static class ContractValidatorV1
         if (string.IsNullOrWhiteSpace(value))
         {
             violations.Add(new("FIELD_REQUIRED", path, "This field is required."));
+        }
+    }
+
+    private static void ValidateOptionalIdentifier(
+        string? value,
+        string path,
+        int maximumLength,
+        ICollection<ContractViolationV1> violations)
+    {
+        if (value is not null
+            && (value.Length > maximumLength || value.Any(char.IsControl)))
+        {
+            violations.Add(new("IDENTIFIER_INVALID", path, "The identifier contains unsupported characters or is too long."));
         }
     }
 

@@ -25,7 +25,7 @@ public sealed class MemoryConsolidationWindowV1Tests
                 index,
                 index % 4 == 0 ? "image" : " chat \r\n😀",
                 index % 4 == 0 ? "Image" : "Text",
-                index % 6 == 0 ? DirectionEvidenceV1.DefaultSmallSenderId : DirectionEvidenceV1.UserConfirmed))
+                index % 6 == 0 ? DirectionEvidenceV1.DefaultSmallSenderId : DirectionEvidenceV1.SourceConfirmed))
             .ToArray();
         var source = new PagedMessageSource(messages);
         var collector = new ConsolidationMessageCollectorV1(source);
@@ -359,7 +359,7 @@ public sealed class MemoryConsolidationWindowV1Tests
         int index,
         string text,
         string messageType = "Text",
-        DirectionEvidenceV1 evidence = DirectionEvidenceV1.UserConfirmed,
+        DirectionEvidenceV1 evidence = DirectionEvidenceV1.SourceConfirmed,
         MessageDirectionV1 direction = MessageDirectionV1.Incoming) => new()
     {
         MessageId = Guid.Parse($"00000000-0000-0000-0000-{index:D12}"),

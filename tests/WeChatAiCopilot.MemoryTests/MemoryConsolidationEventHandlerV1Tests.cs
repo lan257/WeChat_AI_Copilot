@@ -20,7 +20,7 @@ public sealed class MemoryConsolidationEventHandlerV1Tests
             Text = "confirmed text",
             MessageType = "Text",
             Direction = MessageDirectionV1.Incoming,
-            DirectionEvidence = DirectionEvidenceV1.UserConfirmed
+            DirectionEvidence = DirectionEvidenceV1.SourceConfirmed
         }]);
         var repository = new FakeConsolidationStateRepository(accountId, conversationId, contactId);
         var handler = new MemoryConsolidationEventHandlerV1(
@@ -55,7 +55,7 @@ public sealed class MemoryConsolidationEventHandlerV1Tests
             Text = "persisted before confirmation event was consumed",
             MessageType = "Text",
             Direction = MessageDirectionV1.Incoming,
-            DirectionEvidence = DirectionEvidenceV1.UserConfirmed
+            DirectionEvidence = DirectionEvidenceV1.SourceConfirmed
         }]);
         var repository = new FakeConsolidationStateRepository(accountId, conversationId, contactId);
         var generator = new SyntheticConsolidationGenerator();
@@ -139,7 +139,7 @@ public sealed class MemoryConsolidationEventHandlerV1Tests
                 Text = "synthetic contact wording",
                 MessageType = "Text",
                 Direction = MessageDirectionV1.Incoming,
-                DirectionEvidence = DirectionEvidenceV1.UserConfirmed
+                DirectionEvidence = DirectionEvidenceV1.SourceConfirmed
             },
             new MessageQueryItemV1
             {
@@ -147,7 +147,7 @@ public sealed class MemoryConsolidationEventHandlerV1Tests
                 Text = "synthetic account wording",
                 MessageType = "Text",
                 Direction = MessageDirectionV1.Outgoing,
-                DirectionEvidence = DirectionEvidenceV1.UserConfirmed
+                DirectionEvidence = DirectionEvidenceV1.SourceConfirmed
             }
         ], calibrationVersion: 8, identityNamespace: "ns-after-switch");
         var repository = new FakeConsolidationStateRepository(accountId, conversationId, contactId);
@@ -206,7 +206,7 @@ public sealed class MemoryConsolidationEventHandlerV1Tests
                 Text = "synthetic calibration event",
                 MessageType = "Text",
                 Direction = MessageDirectionV1.Incoming,
-                DirectionEvidence = DirectionEvidenceV1.UserConfirmed
+                DirectionEvidence = DirectionEvidenceV1.SourceConfirmed
             }],
             calibrationVersion: currentCalibrationVersion);
         var repository = new FakeConsolidationStateRepository(accountId, conversationId, contactId);
@@ -249,7 +249,7 @@ public sealed class MemoryConsolidationEventHandlerV1Tests
                 Text = "already consolidated",
                 MessageType = "Text",
                 Direction = MessageDirectionV1.Incoming,
-                DirectionEvidence = DirectionEvidenceV1.UserConfirmed
+                DirectionEvidence = DirectionEvidenceV1.SourceConfirmed
             },
             new MessageQueryItemV1
             {
@@ -257,7 +257,7 @@ public sealed class MemoryConsolidationEventHandlerV1Tests
                 Text = new string('x', 5000),
                 MessageType = "Text",
                 Direction = MessageDirectionV1.Incoming,
-                DirectionEvidence = DirectionEvidenceV1.UserConfirmed
+                DirectionEvidence = DirectionEvidenceV1.SourceConfirmed
             },
             new MessageQueryItemV1
             {
@@ -265,7 +265,7 @@ public sealed class MemoryConsolidationEventHandlerV1Tests
                 Text = "y",
                 MessageType = "Text",
                 Direction = MessageDirectionV1.Outgoing,
-                DirectionEvidence = DirectionEvidenceV1.UserConfirmed
+                DirectionEvidence = DirectionEvidenceV1.SourceConfirmed
             }
         ]);
         var state = new MemoryConsolidationStateV1

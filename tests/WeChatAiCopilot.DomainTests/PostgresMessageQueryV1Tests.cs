@@ -1,4 +1,3 @@
-using WeChatAiCopilot.Api.Contracts.V1;
 using WeChatAiCopilot.Api.Modules.Conversations.Application;
 using WeChatAiCopilot.Api.Modules.Messages.Contracts;
 
@@ -6,101 +5,6 @@ namespace WeChatAiCopilot.DomainTests;
 
 public sealed class PostgresMessageQueryV1Tests
 {
-    [Fact]
-    public void ResolvePerspectiveSnapshot_ReturnsNamespaceAndPerspectiveForOneCalibrationScope()
-    {
-        var snapshot = PostgresMessageQueryV1.ResolvePerspectiveSnapshot(
-        [
-            new("wx4:account-a", nameof(PerspectiveStateV1.Confirmed), 4, 2)
-        ]);
-
-        Assert.Equal(PerspectiveStateV1.Confirmed, snapshot.State);
-        Assert.Equal(4, snapshot.Version);
-        Assert.Equal("wx4:account-a", snapshot.IdentityNamespace);
-    }
-
-    [Fact]
-    public void ResolvePerspectiveSnapshot_ReturnsUnresolvedAndNoNamespaceWhenThereAreNoScopes()
-    {
-        var snapshot = PostgresMessageQueryV1.ResolvePerspectiveSnapshot(
-            Array.Empty<PostgresMessageQueryV1.PerspectiveCalibrationRow>());
-
-        Assert.Equal(PerspectiveStateV1.Unresolved, snapshot.State);
-        Assert.Equal(0, snapshot.Version);
-        Assert.Null(snapshot.IdentityNamespace);
-    }
-
-    [Fact]
-    public void ResolvePerspectiveSnapshot_WaitsUntilEveryComparableScopeIsConfirmed()
-    {
-        // A conversation whose messages live in more than one shard or message table carries one
-        // calibration per scope. It is confirmed only when every scope that can show a pair is confirmed;
-        // refusing whenever more than one row exists made it impossible to finish.
-        var snapshot = PostgresMessageQueryV1.ResolvePerspectiveSnapshot(
-        [
-            new("wx4:account-a", nameof(PerspectiveStateV1.Confirmed), 4, 2),
-            new("wx4:account-b", nameof(PerspectiveStateV1.PendingConfirmation), 2, 2)
-        ]);
-
-        Assert.Equal(PerspectiveStateV1.PendingConfirmation, snapshot.State);
-        Assert.Equal(4, snapshot.Version);
-        Assert.Equal("wx4:account-a", snapshot.IdentityNamespace);
-
-        var both = PostgresMessageQueryV1.ResolvePerspectiveSnapshot(
-        [
-            new("wx4:account-a", nameof(PerspectiveStateV1.Confirmed), 4, 2),
-            new("wx4:account-b", nameof(PerspectiveStateV1.Confirmed), 6, 2)
-        ]);
-
-        Assert.Equal(PerspectiveStateV1.Confirmed, both.State);
-        Assert.Equal(6, both.Version);
-        Assert.Equal("wx4:account-b", both.IdentityNamespace);
-    }
-
-    [Fact]
-    public void ResolvePerspectiveSnapshot_LetsScopeWithoutComparablePairStayNonBlocking()
-    {
-        // One table where only the contact ever wrote shows a single sender id, so nothing can be
-        // confirmed there. It must not hold the whole conversation at "awaiting confirmation".
-        var snapshot = PostgresMessageQueryV1.ResolvePerspectiveSnapshot(
-        [
-            new("wx4:account-a", nameof(PerspectiveStateV1.Confirmed), 4, 2),
-            new("wx4:account-single", null, 0, 1),
-            new("wx4:account-partial", nameof(PerspectiveStateV1.Unresolved), 1, 1)
-        ]);
-
-        Assert.Equal(PerspectiveStateV1.Confirmed, snapshot.State);
-        Assert.Equal(4, snapshot.Version);
-    }
-
-    [Fact]
-    public void ResolvePerspectiveSnapshot_ReportsPendingWhileOnlyUncomparableScopesExist()
-    {
-        var snapshot = PostgresMessageQueryV1.ResolvePerspectiveSnapshot(
-        [
-            new("wx4:account-single", null, 0, 1)
-        ]);
-
-        Assert.Equal(PerspectiveStateV1.Unresolved, snapshot.State);
-        Assert.Equal(0, snapshot.Version);
-        Assert.Null(snapshot.IdentityNamespace);
-    }
-
-    [Fact]
-    public void ResolvePerspectiveSnapshot_WaitsForComparableScopeThatHasNoCalibrationRowYet()
-    {
-        // A second scope that already shows two senders but has never been written up is still work the
-        // user has to confirm, so it must keep the conversation out of Confirmed.
-        var snapshot = PostgresMessageQueryV1.ResolvePerspectiveSnapshot(
-        [
-            new("wx4:account-a", nameof(PerspectiveStateV1.Confirmed), 4, 2),
-            new("wx4:account-new", null, 0, 2)
-        ]);
-
-        Assert.Equal(PerspectiveStateV1.PendingConfirmation, snapshot.State);
-        Assert.Equal(4, snapshot.Version);
-    }
-
     [Fact]
     public void MessageQuerySnapshot_ExposesConversationTypeAndOptionalIdentityNamespace()
     {

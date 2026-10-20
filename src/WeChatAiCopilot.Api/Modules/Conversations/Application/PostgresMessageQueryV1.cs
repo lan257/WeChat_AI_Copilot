@@ -84,7 +84,6 @@ public sealed class PostgresMessageQueryV1(NpgsqlDataSource dataSource) : IMessa
             connection,
             transaction,
             request.AccountId,
-            request.ConversationId,
             cancellationToken);
 
         AnchorPosition? scopedAnchor = null;
@@ -159,106 +158,21 @@ public sealed class PostgresMessageQueryV1(NpgsqlDataSource dataSource) : IMessa
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
         Guid accountId,
-        Guid conversationId,
         CancellationToken cancellationToken)
     {
-        // One conversation legitimately carries several sender scopes: WeChat numbers senders per shard
-        // and per message table, and the reader writes rows for every shard it can read. The calibration
-        // state therefore has to be aggregated over those scopes instead of demanding exactly one.
         const string sql = """
-            WITH scope_senders AS (
-                SELECT source.identity_namespace, source.message_table, source.shard_fingerprint,
-                       count(DISTINCT source.raw_sender_id)::int AS distinct_senders
-                FROM copilot.message_sources AS source
-                WHERE source.account_id = @account_id AND source.conversation_id = @conversation_id
-                  AND source.identity_namespace IS NOT NULL AND source.raw_sender_id IS NOT NULL
-                  AND source.match_status IN ('Created', 'Matched')
-                GROUP BY source.identity_namespace, source.message_table, source.shard_fingerprint
-            ),
-            calibrations AS (
-                SELECT calibration.identity_namespace, calibration.message_table, calibration.shard_fingerprint,
-                       calibration.perspective_state, calibration.calibration_version,
-                       calibration.account_self_raw_sender_id, calibration.contact_raw_sender_id
-                FROM copilot.sender_calibrations AS calibration
-                WHERE calibration.account_id = @account_id AND calibration.conversation_id = @conversation_id
-            ),
-            scopes AS (
-                SELECT calibration.identity_namespace,
-                       calibration.perspective_state AS state,
-                       calibration.calibration_version AS version,
-                       GREATEST(
-                           COALESCE(sender.distinct_senders, 0),
-                           CASE WHEN calibration.account_self_raw_sender_id IS NOT NULL
-                                  AND calibration.contact_raw_sender_id IS NOT NULL THEN 2 ELSE 0 END
-                       ) AS distinct_senders
-                FROM calibrations AS calibration
-                LEFT JOIN scope_senders AS sender
-                  ON sender.identity_namespace IS NOT DISTINCT FROM calibration.identity_namespace
-                 AND sender.message_table IS NOT DISTINCT FROM calibration.message_table
-                 AND sender.shard_fingerprint IS NOT DISTINCT FROM calibration.shard_fingerprint
-
-                UNION ALL
-
-                SELECT sender.identity_namespace, NULL, 0, sender.distinct_senders
-                FROM scope_senders AS sender
-                WHERE NOT EXISTS (
-                    SELECT 1 FROM calibrations AS calibration
-                    WHERE calibration.identity_namespace IS NOT DISTINCT FROM sender.identity_namespace
-                      AND calibration.message_table IS NOT DISTINCT FROM sender.message_table
-                      AND calibration.shard_fingerprint IS NOT DISTINCT FROM sender.shard_fingerprint
-                )
-            )
-            SELECT identity_namespace, state, version, distinct_senders
-            FROM scopes
-            ORDER BY version DESC, identity_namespace
-            LIMIT 200;
+            SELECT account_wxid
+            FROM copilot.chat_accounts
+            WHERE id = @account_id;
             """;
         await using var command = new NpgsqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("account_id", accountId);
-        command.Parameters.AddWithValue("conversation_id", conversationId);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-
-        var calibrations = new List<PerspectiveCalibrationRow>();
-        while (await reader.ReadAsync(cancellationToken))
-        {
-            calibrations.Add(new PerspectiveCalibrationRow(
-                reader.GetString(0),
-                reader.IsDBNull(1) ? null : reader.GetString(1),
-                reader.GetInt64(2),
-                reader.GetInt32(3)));
-        }
-
-        return ResolvePerspectiveSnapshot(calibrations);
-    }
-
-    internal static PerspectiveSnapshot ResolvePerspectiveSnapshot(
-        IReadOnlyList<PerspectiveCalibrationRow> calibrations)
-    {
-        ArgumentNullException.ThrowIfNull(calibrations);
-
-        // Only a scope that actually shows two different senders can say who is who. A scope holding a
-        // single sender (one table where only the contact ever wrote, a partial shard copy) carries no
-        // comparable pair, so letting it veto the conversation made calibration impossible to finish and
-        // locked the portrait behind "confirm your identity" forever. A comparable scope with no
-        // calibration row at all still counts as awaiting confirmation.
-        var comparable = calibrations
-            .Where(calibration => calibration.DistinctSenderCount >= 2)
-            .OrderByDescending(calibration => calibration.Version)
-            .ToList();
-        if (comparable.Count == 0)
-        {
-            return new PerspectiveSnapshot(PerspectiveStateV1.Unresolved, 0, null);
-        }
-
-        // The newest comparable scope carries the version every consumer compares against, so staleness
-        // and portrait eligibility follow the calibration the user just confirmed rather than input order.
-        var anchor = comparable[0];
-        var everyScopeConfirmed = comparable.All(calibration =>
-            string.Equals(calibration.State, nameof(PerspectiveStateV1.Confirmed), StringComparison.Ordinal));
+        var accountWxid = await command.ExecuteScalarAsync(cancellationToken) as string;
+        var accountIdentityAvailable = !string.IsNullOrWhiteSpace(accountWxid);
         return new PerspectiveSnapshot(
-            everyScopeConfirmed ? PerspectiveStateV1.Confirmed : PerspectiveStateV1.PendingConfirmation,
-            anchor.Version,
-            anchor.IdentityNamespace);
+            accountIdentityAvailable ? PerspectiveStateV1.Confirmed : PerspectiveStateV1.Unresolved,
+            accountIdentityAvailable ? 1 : 0,
+            IdentityNamespace: null);
     }
 
     private static async Task<AnchorPosition?> ReadAnchorAsync(
@@ -434,13 +348,7 @@ public sealed class PostgresMessageQueryV1(NpgsqlDataSource dataSource) : IMessa
     private static MessageSortPosition ToSortPosition(AnchorPosition anchor) =>
         new(anchor.SourceOccurredAt, anchor.IngestedAt, anchor.MessageId);
 
-    internal sealed record PerspectiveCalibrationRow(
-        string IdentityNamespace,
-        string? State,
-        long Version,
-        int DistinctSenderCount);
-
-    internal sealed record PerspectiveSnapshot(
+    private sealed record PerspectiveSnapshot(
         PerspectiveStateV1 State,
         long Version,
         string? IdentityNamespace);

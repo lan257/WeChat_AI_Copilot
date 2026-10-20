@@ -9,7 +9,7 @@ import zipfile
 from pathlib import Path
 
 
-PINNED_VERSION = "1.2.5.1"
+PINNED_VERSION = "1.2.7.0"
 DIST_PREFIX = "wechatauto_replica-"
 
 
