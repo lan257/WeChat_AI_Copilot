@@ -1,98 +1,138 @@
 # WeChat AI Copilot
 
-一个面向 Windows 本机微信数据的 AI 助手与工作区项目，旨在将微信聊天记录、历史上下文、记忆和 AI 建议/咨询能力整合到一个统一的本地应用中。
+这是正式产品的独立实现仓库，不是一个“开箱即用”的示例项目。实际运行需要 Windows 本机环境、已登录的微信桌面端、 PostgreSQL、Python、可用的 Codex CLI（若开启内置 AI 建议），并按正式部署文档完成授权与运行配置。
 
-该仓库是正式产品的独立实现仓库，包含：
-
-- 只读微信数据采集与归档模块（Reader）
-- ASP.NET Core API 服务
-- 会话上下文与记忆能力
-- AI 建议与咨询能力
-- Web 工作区界面与本地桌面启动入口
-- 设计文档、模块契约与测试
-
-> 说明：本项目仅做只读采集，不提供自动发送或自动回复微信消息。
+> 先读正式部署文档，不要按“普通 Demo”方式直接启动。
+>
+> - 正式部署：`docs/operations/Trial_Deployment_Guide.md`
+> - 本机安装与验收：`docs/operations/Agent_Install_Runbook.md`
+> - 本机开发/运行：`docs/operations/Local_Operations_Guide.md`
 
 ## 项目定位
 
-WeChat AI Copilot 以“本地数据 + AI 助手”作为核心思路，支持以下能力：
+WeChat AI Copilot 是一个面向 Windows 本机微信数据的 AI 辅助工作区，目标是将：
 
-- 从本机微信数据中采集消息与历史批次
-- 识别会话、账号、发送者方向和历史上下文
-- 构建会话记忆、证据、人物画像和上下文窗口
-- 结合 AI 生成建议、咨询和工作流辅助
-- 在本地 Web 工作区中查看消息、记忆和建议结果
+- 微信消息采集
+- 会话与历史上下文
+- 人工记忆与证据管理
+- AI 建议与咨询
+- 本地 Web 工作区
 
-## 模块概览
+整合到一个可审计、可授权、可本地运行的产品中。
 
-### 1. Reader
+本仓库包含：
 
-Reader 负责读取本地微信数据，并以结构化 JSON Lines 形式提交给 API 或持久化中间结果。
+- `src/WeChatAiCopilot.Api`：ASP.NET Core API 与 Web 工作区
+- `src/WeChatAiCopilot.Reader`：本机只读 Reader
+- `docs/`：架构设计、模块契约、部署与运行文档
+- `tests/`：单元/回归测试
+- `db/`：数据库迁移与结构化数据资产
 
-主要职责：
+## 运行前必须具备的依赖
 
-- 读取微信消息和历史批次
-- 识别账号、会话、消息方向
-- 进行数据清洗与标准化
-- 以只读、可审计方式写入系统
+正式运行至少需要：
 
-### 2. API
+- Windows 10/11
+- 微信桌面版，并已登录、停留在聊天窗口
+- PostgreSQL（本项目运行与迁移依赖）
+- Python 3.11（Reader 运行依赖）
+- .NET 10 SDK（源码编译/开发时需要）
+- Codex CLI（只有在使用产品内置 AI 建议/咨询时才需要）
+- 一个经用户授权的微信账号，以及至少一个 Direct 会话（用于识别与本地补录历史）
 
-API 层使用 ASP.NET Core 作为正式产品主机，提供：
+注意：
 
-- 读者/消息导入接口
-- 会话与账号查询接口
-- 上下文和记忆管理接口
-- AI 建议与咨询接口
-- 健康检查与系统状态接口
+- 本项目不提供自动发送或自动回复微信消息能力。
+- 直接运行 API 时，Agent 默认失败关闭；若希望使用产品内置 AI，需安装并登录 Codex CLI。
+- 首次启动需要由用户明确确认授权范围，不能直接跳过用户选择。
 
-### 3. Context / Memory
+## 正式部署入口
 
-负责处理历史上下文、人工记忆、证据校验，以及基于会话的上下文窗口管理。
+如果你想在真实 Windows 环境中运行产品，请按下面顺序阅读：
 
-### 4. Agent
+1. [给朋友装「知间」· 新电脑版](docs/operations/Trial_Deployment_Guide.md)
+   - 适合交付给新电脑用户或操作型 Agent
+2. [全新 Windows 环境部署手册（交给本机操作 Agent）](docs/operations/Agent_Install_Runbook.md)
+   - 适合安装、授权、验收的详细步骤
+3. [本机开发与运行手册](docs/operations/Local_Operations_Guide.md)
+   - 适合源码开发者和本地调试
 
-AI 代理层负责：
+## 快速开始（开发/构建场景）
 
-- 按会话范围协调多个候选与轮次
-- 生成建议和咨询响应
-- 持久化运行结果和审计信息
-- 支持本地桌面启动配置 Codex CLI 运行时
+如果你是在源码环境中做开发和构建，而不是交付正式包，至少需要准备：
 
-### 5. Workspace
+```powershell
+dotnet --version
+dotnet build .\WeChatAiCopilot.sln
+dotnet test .\WeChatAiCopilot.sln
+python -m unittest discover -s .\tests\reader_tests -p 'test_*.py' -v
+```
 
-Web 工作区提供：
+然后按本机开发手册配置环境变量与数据库：
 
-- 双栏消息与上下文界面
-- 极简模式
-- 人设切换
-- 建议复制
-- 历史与上下文查询
+```powershell
+$env:ConnectionStrings__FormalDatabase = '<本机 PostgreSQL 连接字符串>'
+$env:Authentication__WebBearerToken = '<随机生成的 Web token>'
+$env:Authentication__ReaderBearerToken = '<另一个随机生成的 Reader token>'
+$env:Web__AllowedAccountExternalId = '<获准账号外部 ID>'
+$env:Web__AllowedConversationExternalId = '<获准 Direct 会话外部 ID>'
+$env:Reader__AllowedAccountExternalId = '<同一获准账号外部 ID>'
+$env:Reader__AllowedConversationExternalId = '<同一获准 Direct 会话外部 ID>'
+dotnet run --project .\src\WeChatAiCopilot.Api
+```
 
-### 6. Platform
+检查健康状态：
 
-平台公共能力包括：
+- `GET http://127.0.0.1:5080/health/live`
+- `GET http://127.0.0.1:5080/health/ready`
+- 浏览器访问 `http://127.0.0.1:5080/`
 
-- Bearer 鉴权
-- PostgreSQL 迁移与初始化
-- 健康/就绪检查
-- Outbox 消费与重试机制
+## 关键约束
 
-## 技术栈
+- Reader 仅读本机微信数据，不做自动发送或自动回复。
+- 一个账号下可监听的 Direct 会话范围需先明确授权。
+- 产品内置 AI 建议需要用户明确同意，并通过已登录的 Codex CLI/OpenAI 服务处理必要上下文。
+- 正式运行前必须确认：数据库、鉴权、账号范围、微信登录状态和 Codex 是否已准备好。
 
-- C# / ASP.NET Core
-- Python（Reader）
-- PostgreSQL
-- HTML / JavaScript / CSS
-- .NET CLI / PowerShell / Windows 批处理脚本
+## 主要模块
 
-## 仓库结构
+### API
+
+`src/WeChatAiCopilot.Api`：负责：
+
+- Web 工作区
+- 账号与会话查询
+- 消息和历史导入接口
+- 记忆与上下文接口
+- AI 建议/咨询接口
+- 健康检查与系统状态
+
+### Reader
+
+`src/WeChatAiCopilot.Reader`：负责：
+
+- 读取本机微信数据
+- 识别账号、会话、方向和来源
+- 按协议提交到 API
+- 只读采集并保留可审计记录
+
+### Docs
+
+`docs/` 中负责保存：
+
+- 模块设计与架构说明
+- 共享契约
+- 并行开发计划
+- 部署手册与运维说明
+
+## 目录结构
 
 ```text
 .
 ├── .github/
 ├── db/
 ├── docs/
+│   └── operations/
 ├── scripts/
 ├── src/
 │   ├── WeChatAiCopilot.Api/
@@ -112,146 +152,15 @@ Web 工作区提供：
 └── ...
 ```
 
-## 快速开始
-
-### 1. 安装依赖
-
-确保本机已安装：
-
-- .NET SDK
-- PostgreSQL（按需）
-- Python 3
-- Windows 环境（该项目面向本机 Windows 运行）
-
-### 2. 启动 API
-
-在仓库根目录执行：
-
-```powershell
-dotnet run --project src/WeChatAiCopilot.Api
-```
-
-默认情况下，应用可在无数据库配置时启动；但当设置 `ConnectionStrings__FormalDatabase` 后，启动时会自动应用仓库中的版本化迁移。
-
-### 3. 健康检查
-
-```http
-GET /health/ready
-```
-
-返回就绪状态可以用于确认数据库与依赖项状态。
-
-### 4. 关键配置
-
-常见配置项包括：
-
-- `ConnectionStrings__FormalDatabase`
-- `Authentication__WebBearerToken`
-- `Authentication__ReaderBearerToken`
-- `Reader__AllowedAccountExternalId`
-- `Web__AllowedAccountExternalId`
-- `Agent:Runtime`
-
-其中：
-
-- `Agent:Runtime` 可设置为 `Fake` 或 `CodexCli`
-- 未配置或未知值时，Agent 将默认失败关闭
-- 使用 Codex CLI 时，需要单独配置目标机运行时环境
-
-## API 说明
-
-### 健康与系统状态
-
-- `GET /health/live`
-- `GET /health/ready`
-- `GET /api/system/status`
-
-### Reader 与数据导入
-
-- `POST /api/reader/messages`
-- `POST /api/reader/history-batches`
-- `GET /api/reader/targets`
-- `POST /api/reader/status`
-
-### 会话与账号
-
-- `GET /api/accounts`
-- `GET /api/accounts/{accountId}/conversations`
-- `GET /api/conversations/current`
-- `GET /api/conversations/current/messages`
-
-### 记忆与上下文
-
-- `GET /api/conversations/current/memory`
-- `POST /api/conversations/current/memory`
-- `PUT /api/conversations/current/memory/{memoryId}`
-- `DELETE /api/conversations/current/memory/{memoryId}`
-
-### AI 建议与咨询
-
-- `GET /api/ai/personas`
-- `GET /api/ai/execution-profiles`
-- `POST /api/ai/suggestions`
-- `POST /api/ai/consultations`
-- `GET /api/ai/consultations/{threadId}`
-- `POST /api/ai/consultations/{threadId}/turns`
-
-## 测试
-
-项目提供 `.NET` 和 `Python` 两类测试：
-
-```powershell
-dotnet build WeChatAiCopilot.sln
-dotnet test WeChatAiCopilot.sln
-python -m unittest discover -s tests/reader_tests -p 'test_*.py' -v
-```
-
-测试覆盖范围包括：
-
-- Agent 逻辑
-- Domain 规则
-- Memory 处理
-- Platform 能力
-- Reader 数据结果
-
-## 文档
-
-项目文档集中在 `docs/` 目录，其中包括：
-
-- 设计与总体架构
-- 模块契约
-- 并行开发计划
-- 运行手册
-- 版本状态说明
-
-关键入口：
+## 文档导航
 
 - [docs/README.md](docs/README.md)
+- [docs/operations/Trial_Deployment_Guide.md](docs/operations/Trial_Deployment_Guide.md)
+- [docs/operations/Agent_Install_Runbook.md](docs/operations/Agent_Install_Runbook.md)
+- [docs/operations/Local_Operations_Guide.md](docs/operations/Local_Operations_Guide.md)
 - [src/WeChatAiCopilot.Api/README.md](src/WeChatAiCopilot.Api/README.md)
 - [src/WeChatAiCopilot.Reader/README.md](src/WeChatAiCopilot.Reader/README.md)
 
-## 设计原则
+## 结论
 
-本项目遵循以下设计理念：
-
-- 以本地、只读方式采集微信数据
-- 明确模块边界，降低耦合
-- 以契约驱动模块协作
-- 保持可审计、可验证、可回放的消息处理链路
-- AI 能力采用受控执行与预算管理
-
-## 注意事项
-
-- 本项目不会自动发送消息，也不会自动回复微信。
-- Agent 默认需要显式配置运行时，避免未授权行为。
-- 正式运行前，需要根据环境准备数据库、鉴权和账户范围配置。
-
-## 许可证与维护
-
-该仓库用于正式产品开发与本地验证。若你要在自己的环境中运行和扩展，请优先参考文档目录中的开发与运维说明。
-
-## 结语
-
-WeChat AI Copilot 是一个围绕微信消息、上下文、记忆和 AI 协作的本地工作区型项目。它强调安全、可审计和模块化设计，适合用于研究、原型开发和正式产品迭代。
-
-如果你希望，我也可以继续把这个 README 再调整成更偏“GitHub 风格展示页”的版本，或者改成更适合中文开源项目的“项目介绍 + 运行指南 + 贡献说明”版本。
+这个仓库不是一个“单机 demo”项目，而是一个需要 Windows 环境、微信授权、PostgreSQL、Python 与 Codex CLI 配合的正式部署型应用。正确的入口不是省略依赖，而是先按正式部署文档完成环境与授权，再进入本机开发或运行流程。
