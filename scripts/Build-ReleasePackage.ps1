@@ -1,8 +1,8 @@
 ﻿# Build a shippable, verifiable Windows package for 知间 (WeChat AI Copilot).
 #
-# The package keeps the repository layout, so the existing launcher and setup script run from the
-# installed folder without a second code path: a friend who receives the zip only needs
-# Install-FromPackage.ps1 and then 启动正式项目.cmd.
+# The package keeps the repository layout, so the launcher and setup script run from the installed
+# folder without a second code path. Recipients also receive Install-FromPackage.ps1 and the
+# self-contained Agent_Install_Runbook.md; the product's Codex CLI login remains user-owned.
 #
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Build-ReleasePackage.ps1
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Build-ReleasePackage.ps1 -Version 0.8.2
@@ -29,6 +29,9 @@ if ((Get-Variable -Name PSVersionTable -ValueOnly).PSVersion.Major -lt 6) {
 
 $productRoot = Split-Path -Parent $PSScriptRoot
 $apiProject = Join-Path $productRoot 'src\WeChatAiCopilot.Api'
+$readerRoot = Join-Path $productRoot 'src\WeChatAiCopilot.Reader'
+$agentRunbook = Join-Path $productRoot 'docs\operations\Agent_Install_Runbook.md'
+$requiredReaderVersion = '1.2.7.0'
 $releaseRoot = if ($OutDir) { $OutDir } else { Join-Path $productRoot 'artifacts\release' }
 $dotnet = (Get-Command dotnet.exe -ErrorAction SilentlyContinue).Source
 
@@ -58,7 +61,23 @@ function Get-BuildIdentity([string]$root) {
     return '0.0.0-{0}+{1}' -f $stamp, $commit
 }
 
+function Test-ReaderRuntime {
+    $modulePath = Join-Path $readerRoot '.runtime\package\wechatauto\db.py'
+    $metadataPath = Join-Path $readerRoot '.runtime\package\UPSTREAM.txt'
+    $cryptoPath = Join-Path $readerRoot '.runtime\deps\cryptography\__init__.py'
+    $zstandardPath = Join-Path $readerRoot '.runtime\deps\zstandard\__init__.py'
+    if (-not (Test-Path -LiteralPath $modulePath -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $metadataPath -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $cryptoPath -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $zstandardPath -PathType Leaf)) { return $false }
+    try {
+        $metadata = [System.IO.File]::ReadAllText($metadataPath)
+        return $metadata.Contains('PyPI release: ' + $requiredReaderVersion)
+    } catch { return $false }
+}
+
 if (-not $dotnet) { throw '找不到 dotnet，无法生成发布包。' }
+if (-not (Test-Path -LiteralPath $agentRunbook -PathType Leaf)) { throw '缺少 docs\operations\Agent_Install_Runbook.md，不能生成新环境交付包。' }
 $buildVersion = if ($Version) { $Version } else { Get-BuildIdentity $productRoot }
 $packageName = 'WeChatAiCopilot-{0}-win-x64' -f ($buildVersion -replace '[^\w.\-]', '-')
 $staging = Join-Path $env:TEMP ('copilot-release-' + [Guid]::NewGuid().ToString('N'))
@@ -67,6 +86,18 @@ $appStage = Join-Path $staging 'artifacts\app\win-x64'
 try {
     New-Item -ItemType Directory -Force -Path $appStage | Out-Null
     New-Item -ItemType Directory -Force -Path $releaseRoot | Out-Null
+
+    # A recipient should not need PyPI access to prepare the pinned read-only runtime.
+    if (-not (Test-ReaderRuntime)) {
+        Write-Step 'RUN' ('准备随包交付的 Reader runtime ' + $requiredReaderVersion)
+        $prepareReader = Join-Path $readerRoot 'prepare-reader.ps1'
+        if (-not (Test-Path -LiteralPath $prepareReader -PathType Leaf)) { throw '缺少 Reader prepare-reader.ps1。' }
+        & (Get-Command powershell.exe -ErrorAction Stop).Source -NoProfile -ExecutionPolicy Bypass -File $prepareReader
+        if ($LASTEXITCODE -ne 0 -or -not (Test-ReaderRuntime)) {
+            throw 'Reader runtime 未能准备到固定版本；请先安装 64 位 Python 3.11 并确认构建机可访问 PyPI。'
+        }
+        Write-Step 'OK' ('Reader runtime ' + $requiredReaderVersion + ' 已准备')
+    }
 
     # --- 1. self-contained application ---------------------------------------
     if ($SkipPublish) {
@@ -120,7 +151,10 @@ try {
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw ('发布包缺少 ' + $launcher) }
         Copy-Item -LiteralPath $path -Destination $staging -Force
     }
-    Write-Step 'OK' '启动脚本、迁移与只读组件已加入'
+    $runbookTarget = Join-Path $staging 'docs\operations\Agent_Install_Runbook.md'
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $runbookTarget) | Out-Null
+    Copy-Item -LiteralPath $agentRunbook -Destination $runbookTarget -Force
+    Write-Step 'OK' '启动脚本、迁移、固定版只读 runtime 与 Agent 安装手册已加入'
 
     # --- 3. manifest ---------------------------------------------------------
     $files = Get-ChildItem -LiteralPath $staging -File -Recurse | Sort-Object FullName
@@ -166,6 +200,11 @@ try {
         foreach ($entry in $archive.Entries) { $byName[$entry.FullName.Replace('\', '/')] = $entry }
         $required = @('启动正式项目.cmd', 'scripts/Start-FormalProject.ps1', 'scripts/Setup-TrialMachine.ps1',
             'scripts/Install-FromPackage.ps1', 'src/WeChatAiCopilot.Reader/reader.py',
+            'src/WeChatAiCopilot.Reader/.runtime/package/UPSTREAM.txt',
+            'src/WeChatAiCopilot.Reader/.runtime/package/wechatauto/db.py',
+            'src/WeChatAiCopilot.Reader/.runtime/deps/cryptography/__init__.py',
+            'src/WeChatAiCopilot.Reader/.runtime/deps/zstandard/__init__.py',
+            'docs/operations/Agent_Install_Runbook.md',
             'artifacts/app/win-x64/WeChatAiCopilot.Api.exe', 'release-manifest.json', 'SHA256SUMS.txt')
         $missing = @($required | Where-Object { -not $byName.ContainsKey($_) })
         if ($missing.Count -gt 0) { throw ('压缩包缺少必需文件：' + ($missing -join '、')) }
@@ -181,16 +220,19 @@ try {
 
     # The recipient only has the zip, so the installer has to sit next to it, not inside it.
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Install-FromPackage.ps1') -Destination $releaseRoot -Force
+    Copy-Item -LiteralPath $agentRunbook -Destination $releaseRoot -Force
     $releaseNote = @(
         '知间 · Windows 发布包',
         ('版本：' + $buildVersion),
         ('安装包：' + (Split-Path -Leaf $zipPath)),
         ('SHA-256：' + $zipHash),
         '',
-        '收到这三样文件（安装包、.sha256、Install-FromPackage.ps1）后，在同一个目录里执行：',
+        '收到四样文件（安装包、.sha256、Install-FromPackage.ps1、Agent_Install_Runbook.md）后，全部放在同一个目录。',
+        '把 Agent_Install_Runbook.md 和同目录的三个安装文件一起提供给执行部署的 Agent；在同目录执行：',
         ('  powershell -NoProfile -ExecutionPolicy Bypass -File Install-FromPackage.ps1 -PackageZip "' + (Split-Path -Leaf $zipPath) + '" -RunSetup'),
         '',
         '脚本会校验哈希、解压到 %LOCALAPPDATA%\Programs\WeChatAiCopilot，再自动准备数据库、只读组件与桌面快捷方式。',
+        '安装包已内含固定版 Reader runtime 和 Agent 安装手册；目标电脑仍需 Python 3.11、PostgreSQL 18。',
         '之后日常只需双击桌面上的「启动正式项目」。软件只读微信，不会代你发送消息。',
         '未签名安装包在陌生电脑上会先出现 SmartScreen 提示，详见 docs\operations\Release_and_Upgrade.md。'
     ) -join [Environment]::NewLine
@@ -203,7 +245,7 @@ try {
     Write-Host ('大小：{0:N1} MB' -f ((Get-Item -LiteralPath $zipPath).Length / 1MB))
     Write-Host ('SHA-256：' + $zipHash)
     Write-Host ''
-    Write-Host ('把这三样一起交给对方（安装包、.sha256、Install-FromPackage.ps1），都在：' + $releaseRoot)
+    Write-Host ('把四样一起交给对方（安装包、.sha256、Install-FromPackage.ps1、Agent_Install_Runbook.md），都在：' + $releaseRoot)
     Write-Host ('对方执行：powershell -NoProfile -ExecutionPolicy Bypass -File Install-FromPackage.ps1 -PackageZip "' + (Split-Path -Leaf $zipPath) + '" -RunSetup')
     exit 0
 } finally {

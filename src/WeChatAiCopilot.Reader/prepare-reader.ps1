@@ -16,18 +16,26 @@ foreach ($target in @($runtimeRoot, $downloadDir, $packageDir, $depsDir)) {
 New-Item -ItemType Directory -Force -Path $downloadDir, $packageDir, $depsDir | Out-Null
 $pythonExe = (Get-Command python -ErrorAction SilentlyContinue).Source
 $pythonArgs = @()
-if ($pythonExe) {
-    $pythonVersion = & $pythonExe --version 2>&1
-    if ($pythonVersion -notmatch '^Python 3\.11\.') { $pythonExe = $null }
+function Test-Python311X64([string]$executable, [string[]]$prefixArgs) {
+    try {
+        $probe = 'import sys,struct; print(sys.version_info[0], sys.version_info[1], struct.calcsize("P")*8)'
+        $output = @(& $executable @prefixArgs '-I' '-c' $probe 2>$null)
+        return ($LASTEXITCODE -eq 0 -and ($output -join '').Trim() -eq '3 11 64')
+    } catch { return $false }
 }
+if ($pythonExe -and -not (Test-Python311X64 $pythonExe $pythonArgs)) { $pythonExe = $null }
 if (-not $pythonExe) {
     $launcher = (Get-Command py -ErrorAction SilentlyContinue).Source
     if ($launcher) {
         $pythonExe = $launcher
         $pythonArgs = @('-3.11')
+        if (-not (Test-Python311X64 $pythonExe $pythonArgs)) {
+            $pythonExe = $null
+            $pythonArgs = @()
+        }
     }
 }
-if (-not $pythonExe) { throw 'Python 3.11 is required to prepare the Reader runtime.' }
+if (-not $pythonExe) { throw '64-bit Python 3.11 is required to prepare the Reader runtime.' }
 
 & $pythonExe @pythonArgs -m pip download --disable-pip-version-check --no-deps --only-binary=:all: --dest $downloadDir 'wechatauto-replica==1.2.7.0'
 if ($LASTEXITCODE -ne 0) { throw 'Could not download the pinned read-only database module.' }

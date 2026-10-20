@@ -5,9 +5,9 @@
 ## 1. 当前部署边界
 
 - 首版运行形态是同一台 Windows 电脑上的 ASP.NET Core API、PostgreSQL、Web 页面和本机 Reader。
-- Reader 只允许配置一个微信账号和一个 Direct 会话；不会自动发送或回复微信消息。
-- 本轮开发验收使用合成消息和临时数据库。真实微信账号、真实联系人和真实消息尚未用于验收。
-- `Agent:Runtime` 默认关闭。只有本机 Codex CLI 已配置、用户明确启用后，AI 请求才会把当前任务所需的会话上下文交给该 CLI。
+- Reader 连接一个当前活动微信账号，可监听同一账号下最多 20 个明确授权的 Direct 会话；不会自动发送微信消息。
+- 当前真实账号仅完成两条身份元数据核验（Outgoing/Self 与 Incoming/Peer）；未读取正文列。连续监听、停止后补读、切号/重启及真实多会话隔离仍待验收。
+- 正式一键启动器会设置 Agent:Runtime=CodexCli；直接运行 API 时 Agent runtime 默认失败关闭。Codex CLI 未安装或未登录时，工作区可启动但 Agent 建议不可用。
 - 未验证远程部署、多人并发、高可用、跨 shard 消息唯一性或所有微信版本兼容性。
 
 ## 2. 环境
@@ -55,25 +55,25 @@ Web 和 Reader 使用不同 token。Web token 只输入本机浏览器当前页�
 
 开发时如需固定回环地址，可在启动 API 前设置 `$env:ASPNETCORE_URLS = 'http://127.0.0.1:5080'`。不要将未经保护的监听地址暴露到局域网或公网。
 
-## 4. 启用 Codex CLI
+## 4. 产品内置 AI Agent
 
-默认不启用 Agent。要进行本机受限运行时验收：
+正式启动器会把产品 Agent 运行时设置为 Codex CLI；缺少 CLI 或登录未完成时，API/工作区仍可启动，但建议和咨询不可用。直接以 dotnet run 启动 API 时，Agent runtime 默认失败关闭，需显式配置。
 
-1. 确认本机 Codex CLI 已安装，并由 CLI 自己完成登录。
-2. 设置 `Agent__Runtime=CodexCli`，配置所需 persona、skill 版本和运行预算，重启 API。
-3. 从 Web 发起建议或咨询；只有这类明确操作会执行模型请求。
+目标机没有 CLI 时，按[OpenAI 官方 Codex CLI Windows 安装说明](https://github.com/openai/codex#quickstart)安装 standalone CLI，由使用者运行 codex login 并自行登录。安装后在新 PowerShell 检查 codex --version 和 codex login status。不要收集 API key、token、认证文件或浏览器回调。
 
-进程使用只读沙箱、临时工作目录、结构化输出 schema 和有界输入输出；不开放 Shell、MCP、远程插件、Web 搜索或微信发送工具。模型请求包含当前获准会话的必要上下文，因此应依照本机数据和所用 Codex 账户的隐私要求使用。不要在日志或问题报告中粘贴聊天正文、提示词、token 或 `CODEX_HOME` 内容。
+用户明确发起建议或咨询时，当前获准会话的必要上下文会交给该用户登录的 Codex CLI/OpenAI 服务处理。部署验收不能擅自触发真实会话请求；需先取得明确同意。未同意时只验收本机 API/Reader，并将 AI 标为“未执行”。
 
-本轮不含聊天数据的 Codex CLI smoke 用时 117 秒；合成建议 API 在 180 秒运行预算下完成。60 秒预算在当前本机延迟下会超时。实际部署时按目标机器的模型响应时间设置 Agent:Budget:MaxDurationSeconds；这项配置同时是运行时硬截止时间。
+运行时使用只读沙箱、临时工作目录、结构化输出 schema 和有界输入输出；不开放 Shell、MCP、远程插件、Web 搜索或微信发送工具。日志与问题报告不得包含聊天正文、提示词、token 或 CODEX_HOME 内容。代理配置只影响 AI CLI 出口，不替代 winget/Python 下载网络配置。
 
-本机测得一次不含聊天数据的结构化 CLI smoke 用时约 117 秒；合成建议 API 在 180 秒运行预算下完成。当前环境使用 60 秒预算会超时。设置 Agent:Budget:MaxDurationSeconds 时应按目标机器的实际响应时间留出余量。
+无聊天状态的 Codex CLI smoke 曾用时 117 秒；合成建议 API 在 180 秒运行预算下完成。目标机器需按实际网络与 CLI 延迟设置运行预算；不要把本机实测时间当作每台新电脑的保证。
 
 ## 5. 准备与运行 Reader
 
-完整安装、单会话配置、实时读取和有界历史补录命令见 [M1 Reader 手册](../../src/WeChatAiCopilot.Reader/README.md)。Reader 第一次连接前，操作者必须确认目标账号与会话；不要用未授权数据做试跑。
+正式启动器自动生成受限 LocalAppData 设置、Reader token 和服务端 allowlist，并启用 API loopback 传输。Reader 支持一个微信账号下最多 20 个明确授权的 Direct 会话。直接运行 Reader 或开发 API 时，需自行配置本机 Reader settings、服务端 Reader token 与账号/会话 allowlist；不得复制别人的令牌。
 
-Reader API 传输默认关闭。只有 Reader 本机设置、服务端 Reader token 和服务端账号/会话 allowlist 三者都配置后，才开启提交。真实微信链路尚未在本轮回归中验收。
+Reader 仅从用户登录的本机微信数据读取。首次选定会话后，启动器默认补录最多 5,000 条可读文本消息到本机 PostgreSQL；如使用者不允许本机补录，可通过启动参数跳过。AI 生成请求会额外把必要上下文交给用户登录的 Codex CLI/OpenAI 服务，必须由用户明确发起并同意。
+
+本机真实账号的两条身份元数据记录已核验：一条 Outgoing/Self、一条 Incoming/Peer，未读取正文列或提交到外部 AI。连续监听、停止后补读、切号/重启和真实多会话隔离仍待验收。
 
 ## 6. 备份与恢复
 
@@ -105,7 +105,7 @@ pg_restore --no-owner --no-privileges --host 127.0.0.1 --port 5432 --username <�
 ## 8. 已知限制
 
 - 单账号、单 Direct 会话配置；Reader 不监听群聊，不提供自动发送。
-- 历史补录最多读取 5,000 条文本消息，读取遇到分片错误或触及上限时整体失败，不把部分结果报作完成。
+- 首次启动补录最多 5,000 条可读文本消息；设置页可提交最近 90 天或本机全部历史任务，全量单任务上限为 200,000 条，具体范围与截止时间按界面提示。
 - `wx4-shard-v2` 来源键包含分片指纹与消息表；单测验证相同 local ID 跨分片不撞号。PostgreSQL 来源合并的集成验收仍需隔离测试库。
 - 账号 wxid 和消息来源的 `SourceConfirmed` 方向决定画像/自动记忆是否可加载；未知发送者保持 Unknown，人工记忆独立保留。
 - 本轮集成和页面验收使用合成数据；实际微信版本兼容、真实账号接入、隐私告知与模型账户策略需在目标本机单独确认。

@@ -1,84 +1,87 @@
-# 发布与升级 · Windows 包
+# 发布与升级 · Windows
 
-面向两个读者：把软件交给别人的人（维护者），和第一次装到陌生电脑上的使用者。
-只读采集、不代发消息的边界在所有步骤里都不变。
+## 核心摘要
 
-## 1. 维护者：生成一个可交付的包
+- 交付对象：全新 Windows 普通用户电脑。
+- 发布包：自包含应用、正式启动脚本、数据库迁移、固定版只读 Reader runtime 和 Agent 安装手册。
+- 目标机依赖：Windows 10/11 x64、winget/App Installer、PostgreSQL 18、Python 3.11 x64；缺少 PostgreSQL/Python 时由 Setup 通过 winget 安装。
+- 产品内置 AI Agent：不随包携带 Codex CLI 凭据。需在目标机安装 Codex CLI 并由使用者登录；这与负责安装的操作型 Agent 是两回事。
+- 安全边界：包未签名；接收者需从可信维护者取得 zip 与 SHA-256。发布包不包含用户数据库和任何凭据。
+- 交付入口：[Agent_Install_Runbook.md](Agent_Install_Runbook.md) 随包内附并在 release 目录单独提供；新 Agent 需同时拿到四个文件。
 
-```
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Build-ReleasePackage.ps1
-```
+## 1. 维护者：构建并交付
 
-产出在 `artifacts\release\`，交给别人时**三样一起给**：
+在正式 product 目录运行：
 
-| 文件 | 作用 |
-| --- | --- |
-| `WeChatAiCopilot-<版本>-win-x64.zip` | 安装包：自包含应用 + 启动脚本 + 只读组件 + `db\migrations` |
-| `…zip.sha256` | 安装包哈希，安装脚本会核对 |
-| `Install-FromPackage.ps1` | 安装入口（放在包外，因为对方手上先只有包） |
+~~~powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/Build-ReleasePackage.ps1
+~~~
 
-`RELEASE.txt`、`release-manifest.json`、`SHA256SUMS.txt`、`VERSION.txt` 都在包里，是给对方核对用的。
+构建机需要 .NET SDK、64 位 Python 3.11、NuGet 源和 PyPI 网络访问；dotnet publish 会从 NuGet 还原应用依赖，Reader runtime 缺失时 prepare-reader.ps1 会从 PyPI 下载依赖。任一依赖源不可达或恢复失败，构建应中止，不得交付缺依赖的包。
 
-脚本自己会做这些检查，任一不通过就中止：
+产出在 artifacts/release/，交付给新机器必须四个文件：
 
-- 应用必须以自包含方式生成（目标机不需要装 .NET）。
-- 包内必须包含 `启动正式项目.cmd`、`scripts\Start-FormalProject.ps1`、`scripts\Setup-TrialMachine.ps1`、
-  `scripts\Install-FromPackage.ps1`、`src\WeChatAiCopilot.Reader\reader.py`、应用可执行文件与入口页。
-- 入口页必须指向 `/v8/main.js`（防止发出旧界面）。
-- 加 `-SkipPublish` 时会比较源码与已生成应用的修改时间，**源码更新过就直接拒绝**，避免把昨天的程序发出去。
+| 文件 | 用途 |
+|---|---|
+| WeChatAiCopilot-<版本>-win-x64.zip | 自包含应用、启动/停止/安装脚本、PostgreSQL 迁移、固定版 Reader runtime 和 Agent 安装手册 |
+| 同名 .zip.sha256 | 校验压缩包 |
+| Install-FromPackage.ps1 | 包外安装入口 |
+| Agent_Install_Runbook.md | 可直接交给新环境操作 Agent 的自包含安装与验收步骤 |
 
-版本号目前只是构建身份（`0.0.0-<日期-时间>+<git 短哈希>`），项目还没有正式的语义化版本方案；
-`release-manifest.json` 里 `signed: false` 是明确的自我声明。
+构建过程会生成 release-manifest.json 和 SHA256SUMS.txt，并在压缩包内核对应用入口、Reader runtime 和 Agent 手册。接收者安装时会按清单逐文件复核。确保四个外部交付文件来自同一次构建，不要把不同版本的 zip、sha256、安装器或手册混在一起。
 
-## 2. 使用者：装到陌生电脑上
+当前包没有代码签名。Windows SmartScreen 可能提示未知发布者；不要指导接收者关闭安全功能。若未通过可信渠道把 SHA-256 交给接收者，不要发布。
 
-把三样文件放进同一个目录，在该目录执行：
+## 2. 接收者：全新电脑安装
 
-```
-powershell -NoProfile -ExecutionPolicy Bypass -File Install-FromPackage.ps1 -PackageZip "WeChatAiCopilot-<版本>-win-x64.zip" -RunSetup
-```
+将四个交付文件放在同一目录，并将四个文件都交给操作型 AI Agent。按 Runbook 执行：
 
-安装脚本按顺序做四件事，任何一步失败都会停下并说明原因：
+~~~powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./Install-FromPackage.ps1 -PackageZip "./WeChatAiCopilot-<版本>-win-x64.zip" -RunSetup
+~~~
 
-1. 核对安装包 SHA-256；`.sha256` 缺失或值不一致就拒绝安装（`-SkipHashCheck` 只给明知情况的人）。
-2. 解压到临时目录，逐个文件按 `release-manifest.json` 核对哈希，任何一项不符就报告“包可能损坏或被截断”。
-3. 检查目标目录里没有本程序正在运行的进程，有就提示先双击「关闭正式项目」。
-4. 镜像复制到 `%LOCALAPPDATA%\Programs\WeChatAiCopilot`，随后 `-RunSetup` 会接着准备 PostgreSQL、
-   Python 只读组件与桌面快捷方式（复用 `Setup-TrialMachine.ps1`，没有第二套安装逻辑）。
+安装器先核对外部 SHA-256，再解压临时目录并逐项校验清单，最后镜像到当前用户的 %LOCALAPPDATA%/Programs/WeChatAiCopilot。它会检查程序目录里没有本产品正在运行的进程；若已运行，应先通过“知间 停止”关闭。
 
-聊天数据不在安装目录里，而在 `%LOCALAPPDATA%\WeChatAiCopilot\Formal`（含私有数据库、备份、凭据），
-**升级和重装都不会动它**。之后日常只需双击桌面「启动正式项目」。
+Setup 会检查 64 位 Windows、PostgreSQL 18、64 位 Python 3.11、固定版 Reader runtime 和桌面快捷方式。PostgreSQL/Python 缺失时需要 winget 与可用软件源；接收机不需要 .NET SDK 或 PyPI 网络。PostgreSQL 机器范围安装若弹出 UAC，需由使用者本人批准；没有管理员权限或未批准则不能完成全新安装。若 winget 不存在、其他安装步骤要求提权、哈希不一致或包内文件缺失，停止并报告，不得跳过校验。
 
-## 3. 升级
+聊天数据库、密钥与运行状态不在安装目录，而在 %LOCALAPPDATA%/WeChatAiCopilot。安装器不会镜像或清理该用户数据目录。若目录已存在，应按升级或沿用旧数据处理，不可当作干净安装。
 
-1. 维护者重新生成包，把新包发给对方。
-2. 对方先双击「关闭正式项目」，再执行第 2 节的安装命令（同一目录会被镜像更新）。
-3. 首次启动时如果检测到新的数据库迁移，启动器会自动：完整备份 → 把备份还原到临时库并比对行数（恢复演练）→
-   通过才应用迁移，失败则中止启动并保留原库。备份保留最近 10 份在 `Formal\backups`。
-4. 想要手动备份或演练：`powershell -File scripts\Backup-FormData.ps1 -Verify -Keep 10`。
+## 3. 产品内置 AI Agent 部署
 
-## 4. 回滚
+正式启动器固定设置产品 Agent 为 Codex CLI runtime。因此：
 
-- **应用回滚**：保留上一版的 zip，按第 2 节重新安装即可（数据目录不受影响）。
-- **数据库回滚**：`Formal\backups\formal-<时间戳>.dump` 是升级前的完整导出，
-  恢复步骤见 `docs\operations\Local_Operations_Guide.md` 第 6 节；`022`、`023` 这类迁移本身是加法，
-  回滚 = 恢复升级前的 dump，不需要反向迁移脚本。
+- 本机工作区与 Reader 可在 Codex CLI 缺失时启动；
+- 生成建议/咨询只有在当前 Windows 用户能运行 Codex CLI 且登录有效时才算就绪；
+- release 包不包含 Codex CLI、模型账户或认证文件。
 
-## 5. 没有签名，也没有假装签名
+目标机没有 Codex CLI 时，使用者同意后按[OpenAI 官方 Windows 安装说明](https://github.com/openai/codex#quickstart)安装。随后在新开的普通 PowerShell 中确认 codex --version 和 codex login status；未登录则由使用者运行 codex login 并自行完成浏览器登录。不要收集 API key、token、auth.json 或浏览器回调。
 
-这是当前最大的发行门槛缺口，必须如实告诉使用者：
+产品用户明确请求建议/咨询后，必要的获准会话上下文会交给已登录的 Codex CLI/OpenAI 服务。部署 Agent 不得为了“证明安装成功”而自动发送真实会话上下文。只有使用者明确同意后才做一次 AI 冒烟；否则分别报告“本机工作区与 Reader 已就绪”和“AI Agent 未验证”。
 
-- 包与安装脚本都**未代码签名**。陌生电脑上第一次运行会出现 SmartScreen「已保护你的电脑」提示，
-  因为发布者信誉未知。
-- 正确做法：保持上面的核对流程（哈希来自维护者本人、通过可信渠道转达），在提示页选择「更多信息」→「仍要运行」。
-  不要为了绕过提示而关闭 Windows 安全功能，也不要修改组策略。
-- 真正的解决方案是购买代码签名证书并对 zip 与 exe 签名，或改走 MSIX/商店分发。这两项都还没做，
-  在做出之前，请把这套包当作“熟人之间、可核对哈希的本机软件”，不是公开渠道下载。
+## 4. 升级与回滚
 
-## 6. 仍然没有做到的（别对外宣称）
+升级前双击“知间 停止”，再用同样的四文件流程安装新包。安装器只镜像更新程序目录，不触碰 Formal 数据目录。
 
-- 没有自动更新通道；每次升级都要重新安装。
-- 没有字节级可复现构建（时间戳与压缩会变化），可复现的是**每个文件的 SHA-256 清单**，不是 zip 本身。
-- 没有干净 VM 上的完整冒烟；CI 会在 Windows runner 上真实“打包 → 安装 → 无数据库启动 → 检查资源头”，
-  但不覆盖微信登录状态、只读组件在真实微信上的表现与桌面快捷方式的视觉结果。
-- 首次真正运行仍需要使用者在微信里已登录，并确认一次监听联系人。
+首次启动发现新数据库迁移时，会自动完整备份、还原到临时库并比对行数；恢复演练通过后才应用迁移。失败时启动会中止并保留原库。备份保留最近 10 份在 Formal/backups。
+
+- 应用回滚：保留上一版完整发布四文件，重新安装上一版 zip；不要用新版本的 sha256 或安装器配旧包。
+- 数据库回滚：从升级前备份恢复到新数据库，再将服务指向恢复库。当前没有自动反向迁移脚本。
+- 手动备份/恢复演练：运行 scripts/Backup-FormData.ps1 -Verify -Keep 10。备份含聊天正文和凭据，按敏感个人数据保护。
+
+## 5. 发布前的全新环境验收门槛
+
+构建脚本的压缩包自检不等于全新电脑冒烟。公开宣称“新电脑可一键部署”前，维护者还必须在隔离的 Windows x64 干净环境按接收者流程验收：
+
+1. 初始环境无 PostgreSQL、无 Python、无 .NET SDK；保留 winget/App Installer。
+2. 放入同一次构建的四个文件，运行完整安装命令；确认 SHA-256、清单、winget 安装、Reader runtime 版本及快捷方式。
+3. 登录微信，由使用者选择一个 Direct 联系人，确认 API ready、工作区打开、Reader 监听中。
+4. 若要宣称产品内置 AI Agent 已部署，另行安装并登录 Codex CLI；只有取得用户同意后，才做一次真实 AI 请求。
+5. 停止程序，确认 5080 和 55432 不再监听。
+
+当前还没有在全新 Windows VM 上完成上述完整冒烟。真实微信版本、用户授权、Codex 登录和 AI 请求都需要接收者本人参与；这些条件没验收前不能宣称整条部署已在干净环境全通过。
+
+## 6. 当前发行限制
+
+- 没有自动更新；每次升级需重新交付完整四文件。
+- 压缩包不是字节级可复现构建；可核验的是清单内各文件 SHA-256 和外部 zip SHA-256。
+- 安装包和脚本未代码签名。当前仅适合通过可信渠道交付并核对哈希的本机安装。

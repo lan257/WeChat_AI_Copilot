@@ -1,30 +1,24 @@
 # 本机使用指南
 
-面向 Windows 普通使用者。微信读取始终**只读**；软件不发送任何微信消息，回复只能由你复制后自己粘贴发送。所有聊天内容只保存在你这台电脑上。
+面向 Windows 普通使用者。微信读取始终**只读**；软件不发送任何微信消息，回复只能由你复制后自己粘贴发送。消息与记忆保存在你这台电脑。你明确请求 AI 建议或咨询时，当前获准会话的必要上下文会交给你登录的 Codex CLI/OpenAI 服务处理。
 
 ## 第一次安装
 
-如果这是新电脑，先运行一次安装脚本（会自动检查并安装缺失组件、准备只读组件、生成应用与桌面快捷方式）：
+收到发布包时，需要同一目录内的四个文件：zip、同名 .zip.sha256、Install-FromPackage.ps1、Agent_Install_Runbook.md。把四个文件交给能运行本机 PowerShell 的操作型 AI Agent，并让它按附件 Runbook 执行和验收。
 
-```
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Setup-TrialMachine.ps1
-```
+如果由维护者在当前电脑直接准备源码目录，才运行 scripts/Setup-TrialMachine.ps1。普通接收者使用发布包，不克隆源码。
 
-看到每行 `[OK]` 和最后的 `准备完成。` 即成功。需要把整台电脑交给别人安装时，让对方的 AI 助手按
-`docs/operations/Agent_Install_Runbook.md` 执行。
+~~~powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./Install-FromPackage.ps1 -PackageZip "./WeChatAiCopilot-<版本>-win-x64.zip" -RunSetup
+~~~
 
-如果你拿到的是**发布包**（一个 `.zip` + 一个 `.sha256` + `Install-FromPackage.ps1`），先安装再准备：
-
-```
-powershell -NoProfile -ExecutionPolicy Bypass -File Install-FromPackage.ps1 -PackageZip "安装包文件名.zip" -RunSetup
-```
-
-它会核对哈希与文件清单，装到 `%LOCALAPPDATA%\Programs\WeChatAiCopilot`；聊天数据不在这个目录里。
-打包、升级与回滚见 `docs/operations/Release_and_Upgrade.md`。
+发布包自带自包含应用和固定版 Reader runtime。Setup 会通过 winget 安装缺少的 PostgreSQL 18 与 64 位 Python 3.11。PostgreSQL 是机器范围安装，Windows 可能要求你本人批准 UAC；没有管理员权限或不批准时请联系维护者。接收机不需要 .NET SDK。哈希或清单核对失败时停止，不要跳过。
 
 ## 启动
 
 双击正式项目根目录的 `启动正式项目.cmd`。它会自动完成：准备本机私有数据库 → 构建或复用预构建应用 → 启动网页服务 → 启动只读采集 → **打开浏览器并自动建立本机会话**（不需要复制任何令牌）。
+
+首次启动默认把所选会话最多 5,000 条可读文本消息补录到本机私有数据库。如不希望导入，可由 Agent 使用启动参数跳过，Reader 仍会监听新消息。
 
 首次运行会**列出本机可读取的一对一会话让你输入编号**（群聊与公众号不会出现在列表里）。这个选择只是起点，之后可以随时增减。列表来自本机微信，找不到或输入无效时不会写入任何配置。
 
@@ -44,6 +38,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File Install-FromPackage.ps1 -Pac
 ## 阅读消息与翻页
 
 工作区中间是聊天窗口，默认加载最近 50 条，点顶部的「↑ 加载更早消息」可以继续往前翻，直到本次可读记录的起点。
+
+## 产品内置 AI Agent
+
+正式启动器会设置产品 Agent 使用本机 Codex CLI。没有 CLI 或没有登录时，工作区与 Reader 仍可运行，但 AI 建议和咨询不可用。
+
+需要 AI 功能时，按[OpenAI 官方 Codex CLI Windows 安装说明](https://github.com/openai/codex#quickstart)安装，并由你本人完成 codex login。不要把认证文件、API key 或 token 发给别人。安装后在新的 PowerShell 检查 codex --version 和 codex login status。
+
+产品用户明确请求建议或咨询后，当前获准会话的必要上下文会交给你登录的 Codex CLI/OpenAI 服务处理。部署助手不得在未获你明确同意时用真实会话做 AI 冒烟。程序不会代替你向微信发送消息。
 
 ## 生成回复建议与咨询
 

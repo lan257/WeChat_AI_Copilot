@@ -86,6 +86,11 @@ try {
     Write-Step 'OK' ('清单核对通过：' + $manifest.files.Count + ' 个文件 · 版本 ' + $manifest.version)
 
     foreach ($required in @('启动正式项目.cmd', 'scripts\Start-FormalProject.ps1', 'scripts\Setup-TrialMachine.ps1',
+            'docs\operations\Agent_Install_Runbook.md',
+            'src\WeChatAiCopilot.Reader\.runtime\package\UPSTREAM.txt',
+            'src\WeChatAiCopilot.Reader\.runtime\package\wechatauto\db.py',
+            'src\WeChatAiCopilot.Reader\.runtime\deps\cryptography\__init__.py',
+            'src\WeChatAiCopilot.Reader\.runtime\deps\zstandard\__init__.py',
             'artifacts\app\win-x64\WeChatAiCopilot.Api.exe')) {
         if (-not (Test-Path -LiteralPath (Join-Path $temp $required) -PathType Leaf)) {
             throw ('安装包里缺少必需文件：' + $required)

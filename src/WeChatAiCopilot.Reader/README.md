@@ -6,7 +6,7 @@
 
 ## 首次准备
 
-要求 Windows、Python 3.11 和可访问 PyPI。PowerShell 从本目录运行：
+要求 Windows、64 位 Python 3.11 和可访问 PyPI。发布构建会把已校验的固定版 runtime 和依赖一起封装，目标电脑安装发布包时不需要访问 PyPI。PowerShell 从本目录运行：
 
 ```powershell
 .\prepare-reader.ps1

@@ -111,7 +111,7 @@ function Protect-LocalText([string] $value) {
 function Test-ReaderPython311([string] $pythonPath) {
     if (-not (Test-Path -LiteralPath $pythonPath -PathType Leaf)) { return $false }
     try {
-        & $pythonPath '-I' '-c' 'import sys; sys.exit(0 if sys.version_info[:2] == (3, 11) else 1)' *> $null
+        & $pythonPath '-I' '-c' 'import sys,struct; sys.exit(0 if sys.version_info[:2] == (3, 11) and struct.calcsize("P") == 8 else 1)' *> $null
         return $LASTEXITCODE -eq 0
     }
     catch { return $false }

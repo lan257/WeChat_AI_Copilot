@@ -1,159 +1,169 @@
-# Agent 安装执行手册（在朋友电脑上由 AI Agent 阅读并执行）
+# 全新 Windows 环境部署手册（交给本机操作 Agent）
 
-面向对象：**在朋友电脑上运行的编码 Agent**（Qoder / Codex / Claude 等）。
-目标：把「知间 · 微信 AI 沟通助手」装到能正常使用，全程不需要使用者手动输入命令，只在必须本人决定的地方询问一次。
+**适用对象**：在目标电脑上能读取交付附件、运行当前用户 PowerShell、检查浏览器结果的 Qoder、Codex、Claude 等操作型 Agent。
+**目标**：只使用可信发布包，在全新 Windows 用户环境完成安装、首次授权与可复核验收；由 Agent 执行命令，不要求使用者复制粘贴。
 
-## 0. 硬性规则（任何情况下不得违反）
+## 部署摘要
+
+- 做什么：核对发布包，安装应用、PostgreSQL、Python 和随包提供的只读 Reader runtime。
+- 最终效果：本机 API、私有数据库、一个获准微信账号及至少一个 Direct 会话可用。
+- 主要影响：首次启动默认把所选会话最近最多 5,000 条可读文本消息补录到本机私有数据库；产品内置 AI 建议需要另行安装并登录 Codex CLI。
+- 数据边界：部署日志和 Agent 报告不得含消息正文、令牌或 wxid；用户明确请求 AI 建议时，必要会话上下文会交给用户登录的 Codex CLI/OpenAI 服务处理。
+- 决策点：使用者本人确认微信登录、选择联系人、决定是否在本机补录历史；如 winget 安装 PostgreSQL 触发 UAC，由使用者批准；产品内置 AI 另需 Codex 登录与 AI 数据使用同意。
+- 验收入口：第 6 节验收本机工作区与 Reader；第 7 节验收产品内置 AI Agent；第 8 节检查停止后的端口状态。
+
+本手册中的“操作 Agent”是负责安装的助手；“产品内置 AI Agent”是本机 Codex CLI。两者是不同程序。发布包不包含 Codex 登录凭据，也不替用户登录。
+
+## 1. 硬性规则
 
 1. **只读微信**。不得实现、开启、尝试或“临时改代码”以支持自动发送微信消息。
-2. **授权范围只能由使用者本人决定**。首次启动只选一个联系人作为起点，之后使用者可以在
-   「设置 → 联系人与会话 → 后台监听」里自行增减，上限 20 个一对一会话。Agent 不得替使用者
-   挑选或默认全选，但当使用者想多用几个联系人时，**应当告诉他怎么加，而不是阻止他**。
-   群聊与公众号不在可选范围内，这是产品设计，不要绕过。
-3. 不得把聊天正文写入日志、终端输出、报告、剪贴板或任何网络请求。需要举证时只给条数、日期、错误码。
-4. 不得修改、删除、移动 `%LOCALAPPDATA%\WeChatAiCopilot` 下的既有数据。若怀疑损坏，先停止并向使用者报告。
-5. 不得关闭杀毒软件、不得添加系统级排除项以外的白名单；需要排除时**说明理由并请使用者确认**。
-6. 不得以管理员身份运行任何步骤，除非普通权限已确认失败且使用者同意。
-7. 任何一步失败：报告**错误码原文 + 你执行的命令 + 期望结果 + 实际结果**，不要静默重试超过两次。
+2. **授权范围只能由使用者本人决定**。首次只选一个联系人作为起点，之后使用者可以在“设置 → 联系人与会话 → 后台监听”自行增减，最多 20 个一对一会话。Agent 不得代选或默认全选；群聊与公众号不在可选范围。
+3. 部署与验收期间不得把聊天正文写入 Agent 输出、终端日志、截图、报告或剪贴板。Reader 将消息交给同一台电脑的 API 回环地址并保存在本机。只有使用者明确同意后，才可通过产品内置 AI 发起真实会话请求；该请求会把当前获准会话的必要上下文交给用户登录的 Codex CLI/OpenAI 服务处理。不得用真实正文排查安装问题。
+4. 不得修改、删除、移动当前用户的 %LOCALAPPDATA%/WeChatAiCopilot 下既有数据。若怀疑损坏，先停止并向使用者报告。
+5. 不得关闭杀毒软件或添加安全排除项。Agent 不得自行打开管理员 PowerShell、输入管理员凭据或绕过 UAC。PostgreSQL 的 winget 安装为机器范围，Windows 可能显示 UAC；向使用者说明后等待本人批准。若使用者没有管理员权限或不批准，停止并报告。
+6. 失败时报告**错误码原文、执行命令、期望结果、实际结果**，不要静默重试超过两次。
 
-## 1. 先确认这台电脑是否具备条件
+## 2. 核对交付文件与电脑条件
 
-依次执行并记录结果（PowerShell）：
+维护者应把下面四个文件放在同一目录，并把这四个文件都提供给操作 Agent：
 
-```powershell
+| 文件 | 检查 |
+|---|---|
+| WeChatAiCopilot-<版本>-win-x64.zip | 只使用维护者提供的版本 |
+| 同名 .zip.sha256 | 安装脚本会强制核对；不得跳过 |
+| Install-FromPackage.ps1 | 安装入口 |
+| Agent_Install_Runbook.md | 本手册；发布时应与安装文件一起提供 |
+
+若文件缺失、出现多个版本、文件名不匹配或来源不可信，暂停并向维护者索取完整一致的一组文件。不要从旧聊天、缓存或任意 Git 分支拼装安装材料。
+
+以当前 Windows 普通用户运行以下检查；不要输出机器上其他应用的信息：
+
+~~~powershell
 [Environment]::Is64BitOperatingSystem
-Get-Command dotnet.exe,winget.exe,py.exe -ErrorAction SilentlyContinue | Select-Object Name,Source
-Test-Path 'C:\Program Files\PostgreSQL\18\bin\initdb.exe','G:\PostgreSQL\18\bin\initdb.exe'
-Get-Process Weixin -ErrorAction SilentlyContinue | Select-Object -First 1 Id,Path
-```
+$PSVersionTable.PSVersion
+Get-Command powershell.exe, winget.exe -ErrorAction SilentlyContinue | Select-Object Name, Source
+Get-Process -Name Weixin, WeChat, 微信 -ErrorAction SilentlyContinue |
+    Select-Object -First 3 ProcessName, Id
+$stateRoot = Join-Path $env:LOCALAPPDATA 'WeChatAiCopilot'
+$installRoot = Join-Path $env:LOCALAPPDATA 'Programs/WeChatAiCopilot'
+[pscustomobject]@{ ExistingProductData = Test-Path -LiteralPath $stateRoot; ExistingProgramDirectory = Test-Path -LiteralPath $installRoot }
+Get-NetTCPConnection -State Listen -LocalPort 5080, 55432 -ErrorAction SilentlyContinue |
+    Select-Object LocalAddress, LocalPort, OwningProcess
+~~~
 
-判定：
+继续条件：
 
-| 检查 | 不满足时 |
-| --- | --- |
-| 64 位 Windows | 停止，告知不支持 |
-| 微信桌面版正在运行且已登录 | 请使用者打开微信并登录到聊天窗口，**这一步不能代办** |
-| PostgreSQL 18 | 由安装脚本用 winget 自动安装 |
-| Python 3.11 64 位 | 由安装脚本用 winget 自动安装 |
-| .NET SDK | **不需要**，前提是项目里已带 `artifacts\app\win-x64`。若缺失，见 §2 说明 |
+- 64 位 Windows 10/11 和 Windows PowerShell 5.1。用当前用户运行，不要依赖 PowerShell 7 的特有语法。
+- 若 PostgreSQL 18 或 64 位 Python 3.11 缺失，安装脚本会通过 winget 安装；因此 winget/App Installer 和可用的 Windows 软件源必须存在。
+- 发布包包含自包含 .NET 应用和固定版 Reader runtime，接收电脑不需要 .NET SDK 或 PyPI 下载。PostgreSQL、Python 缺失时仍需通过 winget 安装。
+- 微信桌面版已安装并由使用者登录、停留在聊天窗口。Weixin 进程存在不代表已登录，必须由使用者确认。
+- 端口 5080 或 55432 若已被占用，先查明是否属于本产品；不得结束不明进程。
+- 如果 %LOCALAPPDATA%/WeChatAiCopilot 已经存在，这不是全新环境。先询问使用者是升级还是沿用；不删除、覆盖或搬动其中任何文件。
+- 若 Programs/WeChatAiCopilot 已存在，先确认是否为本产品旧版；安装会镜像替换该程序目录，移除目录内不属于新包的文件。
 
-若 `artifacts\app\win-x64\WeChatAiCopilot.Api.exe` 不存在且没有 .NET SDK：**不要尝试安装 SDK 或改代码**，直接告知使用者“安装包不完整，需要开发机重新生成 artifacts 目录”。
+电脑缺少 winget 时，请使用者通过 Windows 的 App Installer 安装或修复后重试。PostgreSQL 18 的 winget 安装清单标注为机器范围；全新环境可能要求使用者本人批准 UAC（[官方清单](https://github.com/microsoft/winget-pkgs/tree/master/manifests/p/PostgreSQL/PostgreSQL/18)）。公司管控、软件源不可访问或杀软拦截时，暂停并报告。其他安装步骤意外要求提权时停止并报告。
 
-## 2. 取到程序并准备环境
+## 3. 安装发布包
 
-**优先走发布包**（使用者从聊天工具/网盘拿到三个文件：`…-win-x64.zip`、`….zip.sha256`、`Install-FromPackage.ps1`）。
-先向使用者确认这三个文件放在哪个目录，然后在该目录执行：
+执行前告知使用者：安装脚本会核对 zip 与清单；缺少时会通过 winget 安装 PostgreSQL 18 和 Python 3.11，并更新程序目录。PostgreSQL 是机器范围安装，Windows 可能弹出 UAC，需使用者本人批准；Agent 不处理密码。聊天数据库位于另一个用户数据目录。
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File Install-FromPackage.ps1 -PackageZip "<安装包文件名>.zip" -RunSetup
-```
+在包含四个交付文件的目录运行：
 
-安装脚本会核对 SHA-256、逐文件核对 `release-manifest.json`、镜像安装到
-`%LOCALAPPDATA%\Programs\WeChatAiCopilot`，再自动接着做下面的环境准备。
-**哈希核对不通过就停止**，把期望值与实际值一起回报，不要加 `-SkipHashCheck` 蒙过去。
-Windows 弹出未签名提示时，说明原因并让使用者本人决定，不要为了绕开提示关闭系统安全功能。
+~~~powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./Install-FromPackage.ps1 -PackageZip "./WeChatAiCopilot-<版本>-win-x64.zip" -RunSetup
+~~~
 
-装完后，脚本所在目录就是后续步骤里的 `<项目目录>`（结构与仓库 `product` 一致）。
+不要使用 -SkipHashCheck。等待安装完成，确认输出中出现 SHA-256 一致、清单核对通过、固定版 Reader runtime 就绪，以及最后的“准备完成。”。安装输出可能出现 [RUN]、[SKIP] 或 [WARN]；不是每一行都应以 [OK] 开头。
 
-只有当使用者是开发者、要求从源码运行时，才走这条：
+安装会把程序放入当前用户的 %LOCALAPPDATA%/Programs/WeChatAiCopilot。首次安装不需要 .NET SDK；Setup 会检查 64 位 Python 3.11、Reader runtime 1.2.7.0，并准备本机运行目录。如果提示固定版 runtime 缺失或哈希不符，停止并请维护者重新生成发布包。
 
-```powershell
-git clone https://github.com/lan257/WeChat_AI_Copilot.git
-git -C WeChat_AI_Copilot checkout feat/v8-product-implementation
-cd WeChat_AI_Copilot\product
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Setup-TrialMachine.ps1 -Yes
-```
+## 4. 准备产品内置 AI Agent（仅在使用者需要 AI 建议时）
 
-两种方式最后都期望：每一行以 `[OK]` 开头，最后出现 `准备完成。`。
+正式启动器会把产品 Agent 运行时设为 Codex CLI。缺少 CLI 或未登录时，工作区和 Reader 可以启动，但生成建议/咨询不能算就绪。
 
-- 出现 `[RUN]` 表示正在安装/下载，属正常，等待即可。
-- 出现 `[FAIL]` 按提示处理；只有“既没有预构建应用也没有 .NET SDK”这一条需要回到 §1。
-- 脚本可重复执行，不会删除已有数据。
+1. 检查当前 Windows 用户是否已有 Codex CLI：
 
-## 3. 首次启动与授权（需要使用者本人做一次选择）
+~~~powershell
+Get-Command codex.exe, codex.cmd, codex -ErrorAction SilentlyContinue |
+    Select-Object -First 1 Name, Source
+~~~
 
-```powershell
-# 双击桌面「知间 启动」，或：
-.\启动正式项目.cmd
-```
+2. 若没有安装，向使用者说明需要 OpenAI 官方 Codex CLI，并在使用者同意后按[官方 Windows 安装说明](https://github.com/openai/codex#quickstart)安装。官方 Windows 安装命令：
 
-首次运行会列出本机可读取的**一对一会话编号清单**，请使用者自己输入编号。
+~~~powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "irm https://chatgpt.com/codex/install.ps1 | iex"
+~~~
 
-- **必须让使用者本人选**。Agent 不得代选，也不得事后修改 `scope.json` 来换联系人。
-- 这里选的是**起点**，不是唯一可用的人。装好后告诉使用者：想让别人也进来，去
-  「设置 → 联系人与会话 → 后台监听」打开开关即可（最多 20 个一对一会话），不需要重装、也不需要改配置。
-- 群聊与公众号不会出现在清单里，这是设计限制，不是 bug。
-- 选错时可以重跑：`.\启动正式项目.cmd -ReauthorizeContact`（同样需要使用者本人重新选）。
+不安装第三方改包，不猜测 npm 平台包版本，不索取或粘贴 API key。安装器若要求管理员权限、被安全软件拦截或网络不可用，暂停并报告。
 
-成功标志：终端出现 `正式工作区已启动…`，并且浏览器自动打开工作区、左侧能看到所选联系人。
+3. 安装后打开新的普通 PowerShell 窗口，检查：
 
-## 4. 安装后自检（Agent 必须逐条执行并记录）
+~~~powershell
+codex --version
+codex login status
+~~~
 
-```powershell
-curl.exe -s http://127.0.0.1:5080/health/ready          # 期望 {"status":"ready"...} 且 HTTP 200
-curl.exe -s -o NUL -w "%{http_code}\n" http://127.0.0.1:5080/   # 期望 200
-```
+未登录时运行 codex login，由使用者在浏览器中完成账号登录。Agent 不读取或记录认证文件、浏览器回调、token 或账户凭据。若命令不可用或登录状态不明确，不要把产品 Agent 标记为就绪。
 
-界面侧再确认（浏览器里操作，不要截图聊天内容）：
+4. 若使用者不愿把获准会话的必要上下文交给其 Codex/OpenAI 服务，不发起真实建议请求；可以继续完成本机工作区与 Reader 验收，并明确注明“产品内置 AI Agent 未验证”。需要代理时只采用使用者提供的代理地址；正式启动器的 network.json 代理只影响 AI CLI，不会修复 winget/Python 安装网络。
 
-1. 左侧出现所选联系人，聊天窗口有真实历史消息；
-2. 顶部状态为“监听中”（若为“采集异常”见 §5）；
-3. 读取器自动识别本人和联系人方向；检查聊天消息中能解析的发送者已标为本人或联系人，不可解析的记录显示「发送者未知」；
-4. 右侧 AI 面板能生成三条建议（首次可能 30–60 秒）；
-5. 双击桌面「知间 停止」后，`5080` 与 `55432` 端口都不再监听、无残留进程。
+## 5. 首次启动与授权
 
-## 5. 故障决策树（错误码来自真实观测）
+先由使用者确认微信已登录。再解释首次启动默认会把所选会话最近最多 5,000 条可读文本消息补录到本机私有数据库，并询问是否允许这项本机历史补录。
 
-```
-现象：启动报 WECHAT_DATABASE_UNAVAILABLE
-  → 微信未登录 / 停在登录界面 / 正在重启（密钥只在内存里）
-  → 让使用者把微信打开到聊天窗口，等 10 秒，重跑「知间 启动」
-  → 仍失败：检查是否 32 位 Python（必须 64 位）；检查微信是否以管理员运行（若是，脚本也要管理员运行）
-  → 不要试图重装微信或改数据库
+- 同意本机补录：双击桌面的“知间 启动”。
+- 不同意本机补录：在安装目录执行以下命令，Reader 仍会监听新消息：
 
-现象：网页显示“本机会话尚未建立，请从一键启动入口打开网页”
-  → 一次性授权只服务于启动脚本自动打开的那个标签页
-  → 关闭该标签页，重新双击「知间 启动」；不要手工输入 URL，也不要把链接转发给别人
+~~~powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/Start-FormalProject.ps1 -SkipInitialHistory
+~~~
 
-现象：AI 任务长时间停在“正在执行模型”，最终 RUNTIME_TIMEOUT
-  → 模型出口不可达。先在终端确认 Codex CLI 能否正常出结果
-  → 需要本机代理时：%LOCALAPPDATA%\WeChatAiCopilot\Formal\network.json
-     {"proxyUrl":"http://127.0.0.1:<端口>","noProxy":"127.0.0.1,localhost"}  然后重启
-  → 代理地址必须来自使用者本人提供的信息，不要猜测端口
+首次运行可能显示本机联系人清单。让使用者亲自输入一个一对一联系人的编号；Agent 不得代选或修改授权配置。成功后浏览器会自动打开本机工作区并建立一次性会话；不要手工复制令牌或把本地 URL 转发给他人。
 
-现象：FORMAL_API_REJECTED / READER_SCOPE_NOT_ALLOWED
-  → 采集范围与已授权目标不一致。不要手动改数据库；收集 api.log 末尾 20 行（不含正文）反馈给开发者
+若用户选错联系人，应从正式启动入口重新授权，并由使用者再次选择。不得直接编辑 scope.json 或数据库。
 
-现象：历史补录条数远小于预期
-  → 当前补录窗口是最近 90 天，更早的不在范围内；5000 是单任务行上限不是目标量
-  → 这是已知限制，需求见 docs/product/proposals/2026-10-14_full-local-history-import.md，不要绕过
+## 6. 验收本机工作区与 Reader
 
-现象：杀毒软件删除只读组件 / 报毒
-  → 读微信进程内存取密钥会被启发式判定。向使用者说明原理，由使用者决定是否加入排除项，
-     然后重跑 scripts\Setup-TrialMachine.ps1
+在普通 PowerShell 检查 HTTP 状态码；不要显示或保存响应正文：
 
-现象：端口被占用
-  → 先双击「知间 停止」再启动；仍占用则报告占用进程名与 PID，不要强杀陌生进程
-```
+~~~powershell
+$ready = Invoke-WebRequest -Uri 'http://127.0.0.1:5080/health/ready' -UseBasicParsing -TimeoutSec 10
+$home = Invoke-WebRequest -Uri 'http://127.0.0.1:5080/' -UseBasicParsing -TimeoutSec 10
+[pscustomobject]@{ ReadyStatus = $ready.StatusCode; HomeStatus = $home.StatusCode }
+~~~
 
-## 6. 收尾：向开发者反馈的格式
+两者都应为 200。浏览器中确认左侧显示使用者选择的会话，Reader 状态为“监听中”。如需核对方向，只看方向标签或状态图标，不打开、引用、截图或抄写正文；无法解析的发送者应显示未知。
 
-请使用者（或 Agent 汇总）提供，**不要包含任何聊天内容**：
+若历史补录被跳过或失败，工作区与实时 Reader 仍可能正常。只记录历史任务状态、错误码和数量，不把部分导入说成完整。
 
-1. 第 4 节自检 5 项各自的通过/失败，失败项写屏幕原文；
-2. 首次生成建议等待秒数；等待期间是否知道发生了什么；
-3. 三条建议里会真的发出去几条；不像人话的是第几条、哪里不像；
-4. 找不到的功能（换人设 / 换分析深度 / 补录进度 / 停用监听）；
-5. 最希望有而当前没有的一件事；觉得多余的一件事；
-6. 隐私顾虑原话；
-7. 环境信息：Windows 版本、微信版本、Python 位数、是否使用代理（只说有无，不说地址）。
+## 7. 验收产品内置 AI Agent
 
-## 7. 卸载
+只有使用者已完成 Codex CLI 登录并明确同意用获准会话上下文进行一次 AI 请求后，才在工作区点一次“生成建议”。仅确认请求成功并返回三条非空建议；不要复制、朗读、截图或写入报告建议内容。只记录成功/失败、耗时和错误码。未取得这项同意时，保持 AI 验收为“未执行”，不得假装通过。
 
-```powershell
-# 双击桌面「知间 停止」，然后：
-Remove-Item "$env:LOCALAPPDATA\WeChatAiCopilot" -Recurse -Force   # 删除全部本机数据（含聊天记录），需使用者确认
-Remove-Item "$([Environment]::GetFolderPath('Desktop'))\知间 启动.lnk","$([Environment]::GetFolderPath('Desktop'))\知间 停止.lnk" -ErrorAction SilentlyContinue
-```
+## 8. 停止与端口回收
 
-删除数据目录前必须向使用者二次确认，因为里面是真实聊天记录且不可恢复。
+双击“知间 停止”，随后确认本机端口不再监听：
+
+~~~powershell
+Get-NetTCPConnection -State Listen -LocalPort 5080, 55432 -ErrorAction SilentlyContinue |
+    Select-Object LocalAddress, LocalPort, OwningProcess
+~~~
+
+预期无输出。若仍有监听，记录 PID 和程序路径并报告；不要强制结束陌生进程。
+
+## 9. 故障处理与交付回报
+
+失败时报告准确命令、期望结果、实际结果、稳定错误码、Windows/PowerShell/Python/PostgreSQL/Codex CLI 版本。最多重试两次。不要输出环境变量、访问令牌、账号/联系人 wxid、数据库路径、消息正文、提示词或 Codex 认证文件。
+
+| 现象/错误码 | 处理 |
+|---|---|
+| zip SHA-256 不一致、清单不一致 | 立即停止；请维护者从可信来源重新提供四个文件。 |
+| winget 不存在或 PostgreSQL/Python 安装后仍未检测到 | 检查 App Installer、Windows 软件源与网络；不要提权或静默重复安装。 |
+| WECHAT_DATABASE_UNAVAILABLE | 让使用者确认桌面微信已登录且停在聊天窗口；普通权限重试一次。若微信由管理员启动，不要自动提权，先告知使用者。 |
+| SELF_WXID_UNAVAILABLE、ACTIVE_ACCOUNT_MISMATCH | 停止，不改 scope 或数据库；确认微信当前账号与用户授权范围后反馈错误码。 |
+| READER_UPSTREAM_SENDER_RESOLUTION_UNAVAILABLE | 固定版 Reader runtime 未正确安装；从已核验的发布包重跑 Setup。不要使用短 ID 猜方向。 |
+| CODEX_CLI_START_FAILED | 确认 Codex CLI 在当前用户 PATH 中可运行并已登录；必要时检查 CODEX_CLI_AUTH_REQUIRED、CODEX_CLI_CONFIG_INVALID 或 CODEX_CLI_EXIT_NONZERO。 |
+| CODEX_CLI_NETWORK_FAILED、RUNTIME_TIMEOUT | 先检查使用者提供的网络/代理和 Codex 登录状态；不得猜代理端口或转发聊天内容排障。 |
+| 端口占用 | 先确认进程归属；只有确认属于本项目时使用“知间 停止”，不强杀其他程序。 |
+
+最终分别回报**本机工作区与 Reader**（通过/未通过）和**产品内置 AI Agent**（通过/用户未同意/未配置/未通过）。用户未同意模型请求时，明确写明 AI 验收未执行，不要把它算作通过。
