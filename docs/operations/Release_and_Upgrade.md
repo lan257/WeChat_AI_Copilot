@@ -4,7 +4,7 @@
 
 - 交付对象：全新 Windows 普通用户电脑。
 - 发布包：自包含应用、正式启动脚本、数据库迁移、固定版只读 Reader runtime 和 Agent 安装手册。
-- 目标机依赖：Windows 10/11 x64、winget/App Installer、PostgreSQL 18、64 位 Python 3.10+（3.11 推荐）；缺少 PostgreSQL/Python 时由 Setup 通过 winget 安装 PostgreSQL 18 和推荐版 Python 3.11。
+- 目标机依赖：Windows 10/11 x64、winget/App Installer、PostgreSQL 13+、64 位 Python 3.10+（推荐 PostgreSQL 18 与 Python 3.11）；缺少兼容数据库/Python 时由 Setup 通过 winget 安装推荐版本。
 - 产品内置 AI Agent：不随包携带 Codex CLI 凭据。需在目标机安装 Codex CLI 并由使用者登录；这与负责安装的操作型 Agent 是两回事。
 - 安全边界：包未签名；接收者需从可信维护者取得 zip 与 SHA-256。发布包不包含用户数据库和任何凭据。
 - 交付入口：[Agent_Install_Runbook.md](Agent_Install_Runbook.md) 随包内附并在 release 目录单独提供；新 Agent 需同时拿到四个文件。
@@ -42,7 +42,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./Install-FromPackage.ps
 
 安装器先核对外部 SHA-256，再解压临时目录并逐项校验清单，最后镜像到当前用户的 %LOCALAPPDATA%/Programs/WeChatAiCopilot。它会检查程序目录里没有本产品正在运行的进程；若已运行，应先通过“知间 停止”关闭。
 
-Setup 会检查 64 位 Windows、PostgreSQL 18、可运行 Reader runtime 的 64 位 Python 3.10+ 和桌面快捷方式。3.11 是推荐版本，不是唯一可接受版本；已安装的其他版本先通过 ABI 导入自检，失败时尝试按该版本从 PyPI 重建依赖。没有 Python 时需 winget 与可用软件源；正常情况下接收机不需要 PyPI。接收机不需要 .NET SDK。PostgreSQL 机器范围安装若弹出 UAC，需由使用者本人批准；没有管理员权限或未批准则不能完成全新安装。若 winget 不存在、其他安装步骤要求提权、哈希不一致或包内文件缺失，停止并报告，不得跳过校验。
+Setup 会检查 64 位 Windows、可用的 PostgreSQL 13+、可运行 Reader runtime 的 64 位 Python 3.10+ 和桌面快捷方式。PostgreSQL 18 与 Python 3.11 是推荐版本，不是唯一可接受版本。已有私有数据库按 `PG_VERSION` 匹配同一大版本；新建数据库优先复用已安装版本，未找到兼容版本时安装 PostgreSQL 18。PostgreSQL 13 仍会尝试运行，但会提示其上游维护已结束；建议升级到仍受维护的版本。Python 先通过 ABI 导入自检，失败时尝试按该版本从 PyPI 重建依赖。没有 PostgreSQL/Python 时需要 winget 与可用软件源；正常情况下接收机不需要 PyPI。接收机不需要 .NET SDK。PostgreSQL 机器范围安装若弹出 UAC，需由使用者本人批准；没有管理员权限或未批准则不能完成全新安装。若 winget 不存在、其他安装步骤要求提权、哈希不一致或包内文件缺失，停止并报告，不得跳过校验。
 
 聊天数据库、密钥与运行状态不在安装目录，而在 %LOCALAPPDATA%/WeChatAiCopilot。安装器不会镜像或清理该用户数据目录。若目录已存在，应按升级或沿用旧数据处理，不可当作干净安装。
 

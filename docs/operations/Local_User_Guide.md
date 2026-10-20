@@ -12,7 +12,7 @@
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./Install-FromPackage.ps1 -PackageZip "./WeChatAiCopilot-<版本>-win-x64.zip" -RunSetup
 ~~~
 
-发布包自带自包含应用和固定版 Reader 模块。Setup 会通过 winget 安装缺少的 PostgreSQL 18 与推荐版 Python 3.11；已安装的其他 64 位 Python 3.10+ 会先通过实际依赖导入检查，必要时尝试重新准备依赖。PostgreSQL 是机器范围安装，Windows 可能要求你本人批准 UAC；没有管理员权限或不批准时请联系维护者。接收机不需要 .NET SDK。哈希或清单核对失败时停止，不要跳过。
+发布包自带自包含应用和固定版 Reader 模块。Setup 会尝试复用 PostgreSQL 13+；没有兼容版本时通过 winget 安装推荐版 PostgreSQL 18。若已有本机数据库，启动器只会使用与其 `PG_VERSION` 相同的大版本。Python 推荐 3.11，其他 64 位 Python 3.10+ 会先做依赖导入检查，必要时尝试重新准备依赖。PostgreSQL 13 会提示上游维护已结束。PostgreSQL 是机器范围安装，Windows 可能要求你本人批准 UAC；没有管理员权限或不批准时请联系维护者。接收机不需要 .NET SDK。哈希或清单核对失败时停止，不要跳过。
 
 ## 启动
 

@@ -21,17 +21,10 @@ $secretsPath = Join-Path $stateRoot 'secrets.json'
 $databasePort = 55432
 $databaseName = 'wechat_ai_copilot_formal'
 $drillName = 'formal_restore_drill'
+. (Join-Path $PSScriptRoot 'PostgresRuntime.ps1')
 
-function Resolve-PostgresBin18 {
-    $service = Get-CimInstance Win32_Service -Filter "Name='postgresql-x64-18'" -ErrorAction SilentlyContinue
-    if ($service -and $service.PathName -match '(?i)([A-Z]:\\.*?\\pg_ctl\.exe)') {
-        $dir = Split-Path -Parent $Matches[1]
-        if (Test-Path (Join-Path $dir 'pg_dump.exe')) { return $dir }
-    }
-    foreach ($dir in @('G:\PostgreSQL\18\bin', (Join-Path ${env:ProgramFiles} 'PostgreSQL\18\bin'))) {
-        if (Test-Path (Join-Path $dir 'pg_dump.exe')) { return $dir }
-    }
-    throw '未找到 PostgreSQL 18 的 pg_dump，请确认数据库已安装。'
+function Resolve-PostgresBin {
+    return Resolve-PostgresBinForDataRoot $dataRoot
 }
 
 function Unprotect-LocalText([string] $value) {
@@ -42,7 +35,7 @@ function Unprotect-LocalText([string] $value) {
 }
 
 if (-not (Test-Path -LiteralPath $secretsPath)) { throw '正式项目还没有初始化过（缺少 secrets.json），无需备份。' }
-$bin = Resolve-PostgresBin18
+$bin = Resolve-PostgresBin
 $pgCtl = Join-Path $bin 'pg_ctl.exe'
 $psql = Join-Path $bin 'psql.exe'
 $stored = Get-Content -Raw -LiteralPath $secretsPath | ConvertFrom-Json

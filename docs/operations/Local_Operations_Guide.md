@@ -14,7 +14,7 @@
 
 - Windows 10/11
 - .NET 10 SDK
-- PostgreSQL 服务；本仓库的迁移入口由 API 内置，不需要单独运行 SQL 文件
+- PostgreSQL 13+；推荐 18。本仓库的迁移入口由 API 内置，不需要单独运行 SQL 文件；已有数据目录只能使用相同大版本的程序；PostgreSQL 13 会提示其已停止上游维护
 - 64 位 Python 3.10+（仅运行 M1 Reader；推荐 3.11，实际可用性由原生依赖导入检查确认）
 - PowerShell
 

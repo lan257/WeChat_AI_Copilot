@@ -198,7 +198,7 @@ try {
         # .NET Framework stores archive entry names with backslashes, so compare normalized paths.
         $byName = @{}
         foreach ($entry in $archive.Entries) { $byName[$entry.FullName.Replace('\', '/')] = $entry }
-        $required = @('启动正式项目.cmd', 'scripts/Start-FormalProject.ps1', 'scripts/Setup-TrialMachine.ps1',
+        $required = @('启动正式项目.cmd', 'scripts/Start-FormalProject.ps1', 'scripts/Setup-TrialMachine.ps1', 'scripts/PostgresRuntime.ps1',
             'scripts/Install-FromPackage.ps1', 'src/WeChatAiCopilot.Reader/reader.py',
             'src/WeChatAiCopilot.Reader/.runtime/package/UPSTREAM.txt',
             'src/WeChatAiCopilot.Reader/.runtime/package/wechatauto/db.py',
@@ -232,7 +232,7 @@ try {
         ('  powershell -NoProfile -ExecutionPolicy Bypass -File Install-FromPackage.ps1 -PackageZip "' + (Split-Path -Leaf $zipPath) + '" -RunSetup'),
         '',
         '脚本会校验哈希、解压到 %LOCALAPPDATA%\Programs\WeChatAiCopilot，再自动准备数据库、只读组件与桌面快捷方式。',
-        '安装包已内含固定版 Reader runtime 和 Agent 安装手册；目标电脑需要 64 位 Python 3.10+（推荐 3.11）与 PostgreSQL 18。',
+        '安装包已内含固定版 Reader runtime 和 Agent 安装手册；目标电脑需要 64 位 Python 3.10+（推荐 3.11）与 PostgreSQL 13+（推荐 18）。',
         '之后日常只需双击桌面上的「启动正式项目」。软件只读微信，不会代你发送消息。',
         '未签名安装包在陌生电脑上会先出现 SmartScreen 提示，详见 docs\operations\Release_and_Upgrade.md。'
     ) -join [Environment]::NewLine

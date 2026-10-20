@@ -19,10 +19,12 @@ $readerRoot = Join-Path $productRoot 'src\WeChatAiCopilot.Reader'
 $appDir = Join-Path $productRoot 'artifacts\app\win-x64'
 $publishedExe = Join-Path $appDir 'WeChatAiCopilot.Api.exe'
 $stateRoot = Join-Path $env:LOCALAPPDATA 'WeChatAiCopilot\Formal'
+$formalDataRoot = Join-Path $stateRoot 'postgres-data'
 $setupLog = Join-Path $stateRoot 'setup.log'
 $requiredReaderVersion = '1.2.7.0'
 $results = @()
 . (Join-Path $readerRoot 'ReaderRuntime.ps1')
+. (Join-Path $PSScriptRoot 'PostgresRuntime.ps1')
 
 function Step([string] $name, [string] $state, [string] $detail) {
     $script:results += [pscustomobject]@{ Step = $name; State = $state; Detail = $detail }
@@ -70,32 +72,37 @@ New-Item -ItemType Directory -Force -Path $stateRoot | Out-Null
 if ([Environment]::Is64BitOperatingSystem) { Step '操作系统 64 位' 'OK' '' }
 else { Step '操作系统 64 位' 'FAIL' '只支持 64 位 Windows'; throw '需要 64 位 Windows。' }
 
-# --- 2. PostgreSQL 18 --------------------------------------------------------
-function Find-Postgres18 {
-    $service = Get-CimInstance Win32_Service -Filter "Name='postgresql-x64-18'" -ErrorAction SilentlyContinue
-    if ($service -and $service.PathName -match '(?i)([A-Z]:\\.*?\\pg_ctl\.exe)') {
-        $dir = Split-Path -Parent $Matches[1]
-        if (Test-Path (Join-Path $dir 'initdb.exe')) { return $dir }
-    }
-    foreach ($dir in @('G:\PostgreSQL\18\bin', (Join-Path ${env:ProgramFiles} 'PostgreSQL\18\bin'), 'C:\Program Files\PostgreSQL\18\bin')) {
-        if (Test-Path (Join-Path $dir 'initdb.exe')) { return $dir }
-    }
-    return $null
+$pgClusterMajor = Get-PostgresClusterMajor $formalDataRoot
+if ($null -ne $pgClusterMajor -and $pgClusterMajor -lt 13) {
+    throw ('现有本机数据库使用 PostgreSQL ' + $pgClusterMajor + '，低于项目 SQL 兼容的最低大版本 13。数据未修改；请先做经验证的数据库迁移。')
 }
-
-$pgBin = Find-Postgres18
-if ($pgBin) { Step 'PostgreSQL 18' 'OK' $pgBin }
+$pgCandidates = @(Get-PostgresCandidates)
+$pgCandidate = if ($null -ne $pgClusterMajor) {
+    $pgCandidates | Where-Object { $_.Major -eq $pgClusterMajor } | Select-Object -First 1
+} else {
+    $pgCandidates | Select-Object -First 1
+}
+if ($pgCandidate) {
+    $pgBin = $pgCandidate.Bin
+    if ($pgCandidate.Major -eq 13) { Step 'PostgreSQL 13 生命周期' 'WARN' '该大版本已停止上游维护；将继续实际兼容性检查，建议迁移到受支持版本。' }
+    Step ('PostgreSQL ' + $pgCandidate.Major) 'OK' ('已通过工具版本自检；18 为推荐版本。' + $pgBin)
+}
 else {
+    $installMajor = if ($null -ne $pgClusterMajor) { $pgClusterMajor } else { 18 }
     $winget = Get-Winget
     if ($SkipInstallers -or -not $winget) {
-        Step 'PostgreSQL 18' 'FAIL' '未安装，且无法自动安装'
-        throw '请安装 PostgreSQL 18（winget install -e --id PostgreSQL.PostgreSQL.18）后重跑本脚本。'
+        Step ('PostgreSQL ' + $installMajor) 'FAIL' '未找到与本机数据目录匹配的版本，且无法自动安装'
+        throw ('请安装 PostgreSQL ' + $installMajor + '（winget install -e --id PostgreSQL.PostgreSQL.' + $installMajor + '）后重跑本脚本。')
     }
-    Step 'PostgreSQL 18' 'RUN' '正在静默安装，可能需要几分钟…'
-    & $winget install -e --id PostgreSQL.PostgreSQL.18 --accept-package-agreements --accept-source-agreements --silent 2>&1 | Out-File -FilePath $setupLog -Append -Encoding utf8
-    $pgBin = Find-Postgres18
-    if (-not $pgBin) { Step 'PostgreSQL 18' 'FAIL' '安装后仍未找到，请重跑本脚本' ; throw 'PostgreSQL 18 安装未完成。' }
-    Step 'PostgreSQL 18' 'OK' $pgBin
+    Step ('PostgreSQL ' + $installMajor) 'RUN' '未找到匹配版本，正在静默安装；首次安装可能需要使用者批准 UAC…'
+    $postgresPackageId = 'PostgreSQL.PostgreSQL.' + [string]$installMajor
+    & $winget install -e --id $postgresPackageId --accept-package-agreements --accept-source-agreements --silent 2>&1 | Out-File -FilePath $setupLog -Append -Encoding utf8
+    $pgCandidates = @(Get-PostgresCandidates)
+    $pgCandidate = $pgCandidates | Where-Object { $_.Major -eq $installMajor } | Select-Object -First 1
+    if (-not $pgCandidate) { Step ('PostgreSQL ' + $installMajor) 'FAIL' '安装后仍未找到匹配版本，请检查 setup.log 并重跑'; throw ('PostgreSQL ' + $installMajor + ' 安装未完成。') }
+    $pgBin = $pgCandidate.Bin
+    if ($pgCandidate.Major -eq 13) { Step 'PostgreSQL 13 生命周期' 'WARN' '该大版本已停止上游维护；将继续实际兼容性检查，建议迁移到受支持版本。' }
+    Step ('PostgreSQL ' + $pgCandidate.Major) 'OK' $pgBin
 }
 
 # --- 3. Python (64-bit, 3.11 preferred) --------------------------------------

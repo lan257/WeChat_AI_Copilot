@@ -19,7 +19,7 @@ Agent 需能读取附件、运行普通用户 PowerShell 并查看浏览器结�
 
 ## 朋友自己安装
 
-前提是 64 位 Windows、Windows PowerShell 5.1、winget/App Installer 和已安装的微信桌面版。安装程序可通过 winget 安装缺少的 PostgreSQL 18、推荐版 Python 3.11；如已有其他 64 位 Python 3.10+，会先尝试实际运行自检，并在依赖 ABI 不兼容时询问是否从 PyPI 重建依赖。PostgreSQL 是机器范围安装，Windows 可能弹出 UAC，需朋友本人批准。发布包自带自包含应用、固定版 Reader 模块和 Agent 安装手册，不需要 .NET SDK。
+前提是 64 位 Windows、Windows PowerShell 5.1、winget/App Installer 和已安装的微信桌面版。安装程序会尝试复用 PostgreSQL 13+；新建环境没有兼容版本时通过 winget 安装推荐的 PostgreSQL 18。Python 推荐 3.11，其他 64 位 Python 3.10+ 会先做实际运行自检，依赖 ABI 不兼容时会询问是否从 PyPI 重建依赖。PostgreSQL 13 会提示上游已停止维护。PostgreSQL 是机器范围安装，Windows 可能弹出 UAC，需朋友本人批准。发布包自带自包含应用、固定版 Reader 模块和 Agent 安装手册，不需要 .NET SDK。
 
 把四个文件放入同一目录，在该目录打开 PowerShell 并执行：
 

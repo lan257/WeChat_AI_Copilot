@@ -54,7 +54,8 @@ Get-NetTCPConnection -State Listen -LocalPort 5080, 55432 -ErrorAction SilentlyC
 继续条件：
 
 - 64 位 Windows 10/11 和 Windows PowerShell 5.1。用当前用户运行，不要依赖 PowerShell 7 的特有语法。
-- PostgreSQL 18 是当前交付包验证的数据库版本。若缺失，安装脚本通过 winget 安装。
+- PostgreSQL 13 或更高大版本会做实际兼容性探测，推荐 18。Setup 会复用兼容的已安装版本；新建数据目录时优先选 18，未找到可用版本才通过 winget 安装 18。最低 SQL 兼容基线为 13（PostgreSQL 13 起提供内置 `gen_random_uuid()`）；但 PostgreSQL 13 已结束上游维护，Setup 会警告，建议迁移到仍受维护的版本（[上游版本政策](https://www.postgresql.org/support/versioning/)）。
+- PostgreSQL 数据目录只能由相同大版本的数据库程序打开。已有本机数据时，Setup 会按 `PG_VERSION` 选择精确匹配的大版本；若缺少匹配程序，会安装该版本或明确报错，不会用别的大版本试开或自动升级数据目录。
 - Reader 支持 64 位 Python 3.10 或更高版本，推荐 3.11。Setup 会先用实际导入探测随包原生依赖；若 ABI 不兼容，会询问是否从 PyPI 为检测到的 Python 重新准备依赖。没有可用 Python 时会通过 winget 安装推荐的 3.11。
 - Reader 上游模块 `1.2.7.0` 是产品为发送者身份解析修复所锁定并校验的内部依赖版本；它不会限制用户电脑安装的 Python、Codex CLI 或微信客户端版本。
 - 发布包包含自包含 .NET 应用和 Reader runtime，接收电脑不需要 .NET SDK。通常也不需要 PyPI；只有目标机 Python 与随包本机扩展 ABI 不匹配时，才需要 PyPI 重新准备。
@@ -64,11 +65,11 @@ Get-NetTCPConnection -State Listen -LocalPort 5080, 55432 -ErrorAction SilentlyC
 - 如果 %LOCALAPPDATA%/WeChatAiCopilot 已经存在，这不是全新环境。先询问使用者是升级还是沿用；不删除、覆盖或搬动其中任何文件。
 - 若 Programs/WeChatAiCopilot 已存在，先确认是否为本产品旧版；安装会镜像替换该程序目录，移除目录内不属于新包的文件。
 
-电脑缺少 winget 时，请使用者通过 Windows 的 App Installer 安装或修复后重试。PostgreSQL 18 的 winget 安装清单标注为机器范围；全新环境可能要求使用者本人批准 UAC（[官方清单](https://github.com/microsoft/winget-pkgs/tree/master/manifests/p/PostgreSQL/PostgreSQL/18)）。公司管控、软件源不可访问或杀软拦截时，暂停并报告。其他安装步骤意外要求提权时停止并报告。
+电脑缺少 winget 时，请使用者通过 Windows 的 App Installer 安装或修复后重试。默认 PostgreSQL 18 的 winget 安装清单标注为机器范围；全新环境可能要求使用者本人批准 UAC（[PostgreSQL 18 官方清单](https://github.com/microsoft/winget-pkgs/tree/master/manifests/p/PostgreSQL/PostgreSQL/18)）。公司管控、软件源不可访问或杀软拦截时，暂停并报告。其他安装步骤意外要求提权时停止并报告。
 
 ## 3. 安装发布包
 
-执行前告知使用者：安装脚本会核对 zip 与清单；缺少时会通过 winget 安装 PostgreSQL 18 和推荐版 Python 3.11，并更新程序目录。已安装的其他 64 位 Python 3.10+ 会先被尝试；只有实际导入自检失败，才需要重新准备依赖或改用推荐版本。PostgreSQL 是机器范围安装，Windows 可能弹出 UAC，需使用者本人批准；Agent 不处理密码。聊天数据库位于另一个用户数据目录。
+执行前告知使用者：安装脚本会核对 zip 与清单；缺少兼容数据库时会通过 winget 安装推荐版 PostgreSQL 18，缺少 Python 时会安装推荐版 Python 3.11，并更新程序目录。已安装的 PostgreSQL 13+ 与 Python 3.10+ 会先按实际版本和运行时依赖检查；若已有私有数据库，必须使用其 `PG_VERSION` 对应的大版本。PostgreSQL 13 会显示维护状态警告。PostgreSQL 是机器范围安装，Windows 可能弹出 UAC，需使用者本人批准；Agent 不处理密码。聊天数据库位于另一个用户数据目录。
 
 在包含四个交付文件的目录运行：
 
@@ -78,7 +79,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./Install-FromPackage.ps
 
 不要使用 -SkipHashCheck。等待安装完成，确认输出中出现 SHA-256 一致、清单核对通过、Reader 依赖导入自检通过，以及最后的“准备完成。”。安装输出可能出现 [RUN]、[SKIP] 或 [WARN]；不是每一行都应以 [OK] 开头。
 
-安装会把程序放入当前用户的 %LOCALAPPDATA%/Programs/WeChatAiCopilot。首次安装不需要 .NET SDK；Setup 会检查 64 位 Python 3.10+ 是否能导入 Reader runtime 1.2.7.0，并准备本机运行目录。Python 版本不是固定门槛：3.11 是推荐值，其他版本需通过依赖导入检查。若提示 Reader 文件缺失或哈希不符，停止并请维护者重新生成发布包。
+安装会把程序放入当前用户的 %LOCALAPPDATA%/Programs/WeChatAiCopilot。首次安装不需要 .NET SDK；Setup 会检查 PostgreSQL 13+ 和 64 位 Python 3.10+，并为已有数据库匹配其精确 PostgreSQL 大版本。Python 3.11 与 PostgreSQL 18 是推荐值，不是唯一可接受版本；Python 通过依赖导入自检，PostgreSQL 通过工具版本、数据目录版本及数据库兼容探针检查。PostgreSQL 13 会提示上游已停止维护。若提示包内 Reader 文件缺失或哈希不符，停止并请维护者重新生成发布包。
 
 ## 4. 准备产品内置 AI Agent（仅在使用者需要 AI 建议时）
 
@@ -162,6 +163,7 @@ Get-NetTCPConnection -State Listen -LocalPort 5080, 55432 -ErrorAction SilentlyC
 |---|---|
 | zip SHA-256 不一致、清单不一致 | 立即停止；请维护者从可信来源重新提供四个文件。 |
 | winget 不存在或 PostgreSQL/Python 安装后仍未检测到 | 检查 App Installer、Windows 软件源与网络；不要提权或静默重复安装。 |
+| PostgreSQL 大版本与现有数据目录不匹配 | 停止启动；不要手动改 `PG_VERSION` 或用其他大版本打开。安装精确匹配版本，或由维护者安排备份、`pg_upgrade`/恢复迁移和演练。 |
 | WECHAT_DATABASE_UNAVAILABLE | 让使用者确认桌面微信已登录且停在聊天窗口；普通权限重试一次。若微信由管理员启动，不要自动提权，先告知使用者。若确认登录与权限无误，记录微信客户端版本，再尝试更新到官方当前稳定版；Reader 不绕过不兼容的数据库格式。 |
 | SELF_WXID_UNAVAILABLE、ACTIVE_ACCOUNT_MISMATCH | 停止，不改 scope 或数据库；确认微信当前账号与用户授权范围后反馈错误码。 |
 | READER_UPSTREAM_SENDER_RESOLUTION_UNAVAILABLE | 固定版 Reader runtime 未正确安装；从已核验的发布包重跑 Setup。不要使用短 ID 猜方向。 |

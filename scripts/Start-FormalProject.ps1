@@ -17,6 +17,7 @@ $scopePath = Join-Path $stateRoot 'scope.json'
 $approvedScopePath = Join-Path $stateRoot 'scope-approved.sha256'
 $secretsPath = Join-Path $stateRoot 'secrets.json'
 $dataRoot = Join-Path $stateRoot 'postgres-data'
+. (Join-Path $productRoot 'scripts\PostgresRuntime.ps1')
 $databaseName = 'wechat_ai_copilot_formal'
 $databaseUser = 'copilot_app'
 $databasePort = 55432
@@ -288,16 +289,7 @@ function Unprotect-LocalText([string] $value) {
 }
 
 function Resolve-PostgresBin {
-    $serviceFilter = 'Name=' + [char]39 + 'postgresql-x64-18' + [char]39
-    $service = Get-CimInstance Win32_Service -Filter $serviceFilter -ErrorAction SilentlyContinue
-    if ($service -and $service.PathName -match '(?i)([A-Z]:\\.*?\\pg_ctl\.exe)') {
-        $candidate = Split-Path -Parent $Matches[1]
-        if (Test-Path (Join-Path $candidate 'initdb.exe')) { return $candidate }
-    }
-    foreach ($candidate in @('G:\PostgreSQL\18\bin', (Join-Path $env:ProgramFiles 'PostgreSQL\18\bin'))) {
-        if (Test-Path (Join-Path $candidate 'initdb.exe')) { return $candidate }
-    }
-    throw 'PostgreSQL 18 is not installed. The one-click launcher cannot start the local database.'
+    return Resolve-PostgresBinForDataRoot $dataRoot
 }
 
 function Read-LocalSecrets {
@@ -383,9 +375,15 @@ function Ensure-LocalDatabase([string] $bin, $secrets) {
     $initDb = Join-Path $bin 'initdb.exe'
     $psql = Join-Path $bin 'psql.exe'
     $postgres = Join-Path $bin 'postgres.exe'
+    $runtime = @(Get-PostgresCandidates) | Where-Object { $_.Bin -eq $bin } | Select-Object -First 1
+    if (-not $runtime) { throw ('The PostgreSQL installation at ' + $bin + ' failed its version/tool self-check.') }
+    $clusterMajor = Get-PostgresClusterMajor $dataRoot
+    if ($null -ne $clusterMajor -and $clusterMajor -ne $runtime.Major) {
+        throw ('本机数据库数据目录属于 PostgreSQL ' + $clusterMajor + '，当前选择的是 PostgreSQL ' + $runtime.Major + '。已停止，未尝试打开或升级数据目录。')
+    }
     foreach ($requiredTool in @($pgCtl, $initDb, $psql, $postgres)) {
         if (-not (Test-Path -LiteralPath $requiredTool -PathType Leaf)) {
-            throw 'The PostgreSQL 18 installation is incomplete; a required database executable is missing.'
+            throw ('The PostgreSQL ' + $runtime.Major + ' installation is incomplete; a required database executable is missing.')
         }
     }
     if (-not (Test-Path (Join-Path $dataRoot 'PG_VERSION'))) {
@@ -426,7 +424,7 @@ function Ensure-LocalDatabase([string] $bin, $secrets) {
             $env:PGPASSWORD = $secrets.BootstrapPassword
             $env:PGCONNECT_TIMEOUT = '2'
             try {
-                $probe = & $psql '-X' '-q' '-A' '-t' '-h' '127.0.0.1' '-p' "$databasePort" '-U' 'copilot_bootstrap' '-d' 'postgres' '-c' 'SELECT 1' 2>$null
+                $probe = & $psql '-X' '-q' '-A' '-t' '-h' '127.0.0.1' '-p' "$databasePort" '-U' 'copilot_bootstrap' '-d' 'postgres' '-c' 'SELECT CASE WHEN current_setting(''server_version_num'')::integer / 10000 >= 13 AND gen_random_uuid() IS NOT NULL THEN 1 ELSE 0 END' 2>$null
                 $ready = ($LASTEXITCODE -eq 0 -and ($probe -join '').Trim() -eq '1')
             }
             catch {
@@ -441,9 +439,18 @@ function Ensure-LocalDatabase([string] $bin, $secrets) {
             $postgresProcess.Refresh()
             if ($postgresProcess.HasExited -and -not $ready) { break }
         } while (-not $ready -and [DateTime]::UtcNow -lt $deadline)
-        if (-not $ready) { throw 'The private local database did not become ready.' }
+        if (-not $ready) { throw ('The private PostgreSQL ' + $runtime.Major + ' database did not become ready or failed its compatibility probe.') }
         Set-StartupStage '本机数据库已就绪。'
     }
+
+    $env:PGPASSWORD = $secrets.BootstrapPassword
+    try {
+        $compatibility = & $psql '-X' '-q' '-A' '-t' '-h' '127.0.0.1' '-p' "$databasePort" '-U' 'copilot_bootstrap' '-d' 'postgres' '-c' 'SELECT CASE WHEN current_setting(''server_version_num'')::integer / 10000 >= 13 AND gen_random_uuid() IS NOT NULL THEN 1 ELSE 0 END' 2>$null
+        if ($LASTEXITCODE -ne 0 -or ($compatibility -join '').Trim() -ne '1') {
+            throw ('The installed PostgreSQL ' + $runtime.Major + ' server failed the application compatibility probe.')
+        }
+    }
+    finally { Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue }
 
     $sqlPath = Join-Path $stateRoot 'prepare-database.tmp.sql'
     $sql = @"

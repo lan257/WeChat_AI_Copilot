@@ -85,7 +85,7 @@ try {
     }
     Write-Step 'OK' ('清单核对通过：' + $manifest.files.Count + ' 个文件 · 版本 ' + $manifest.version)
 
-    foreach ($required in @('启动正式项目.cmd', 'scripts\Start-FormalProject.ps1', 'scripts\Setup-TrialMachine.ps1',
+    foreach ($required in @('启动正式项目.cmd', 'scripts\Start-FormalProject.ps1', 'scripts\Setup-TrialMachine.ps1', 'scripts\PostgresRuntime.ps1',
             'docs\operations\Agent_Install_Runbook.md',
             'src\WeChatAiCopilot.Reader\.runtime\package\UPSTREAM.txt',
             'src\WeChatAiCopilot.Reader\.runtime\package\wechatauto\db.py',
