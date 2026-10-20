@@ -15,7 +15,7 @@
 - Windows 10/11
 - .NET 10 SDK
 - PostgreSQL 服务；本仓库的迁移入口由 API 内置，不需要单独运行 SQL 文件
-- Python 3.11（仅运行 M1 Reader）
+- 64 位 Python 3.10+（仅运行 M1 Reader；推荐 3.11，实际可用性由原生依赖导入检查确认）
 - PowerShell
 
 在仓库根目录执行：
@@ -59,7 +59,7 @@ Web 和 Reader 使用不同 token。Web token 只输入本机浏览器当前页�
 
 正式启动器会把产品 Agent 运行时设置为 Codex CLI；缺少 CLI 或登录未完成时，API/工作区仍可启动，但建议和咨询不可用。直接以 dotnet run 启动 API 时，Agent runtime 默认失败关闭，需显式配置。
 
-目标机没有 CLI 时，按[OpenAI 官方 Codex CLI Windows 安装说明](https://github.com/openai/codex#quickstart)安装 standalone CLI，由使用者运行 codex login 并自行登录。安装后在新 PowerShell 检查 codex --version 和 codex login status。不要收集 API key、token、认证文件或浏览器回调。
+目标机没有 CLI 时，按[OpenAI 官方 Codex CLI Windows 安装说明](https://github.com/openai/codex#quickstart)安装 standalone CLI，由使用者运行 codex login 并自行登录。程序不硬性检查某个 CLI 版本；在新 PowerShell 查看 codex --version（诊断信息）和 codex login status，并通过一次实际请求确认兼容。不要收集 API key、token、认证文件或浏览器回调。
 
 用户明确发起建议或咨询时，当前获准会话的必要上下文会交给该用户登录的 Codex CLI/OpenAI 服务处理。部署验收不能擅自触发真实会话请求；需先取得明确同意。未同意时只验收本机 API/Reader，并将 AI 标为“未执行”。
 

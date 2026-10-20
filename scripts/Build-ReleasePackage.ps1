@@ -94,7 +94,7 @@ try {
         if (-not (Test-Path -LiteralPath $prepareReader -PathType Leaf)) { throw '缺少 Reader prepare-reader.ps1。' }
         & (Get-Command powershell.exe -ErrorAction Stop).Source -NoProfile -ExecutionPolicy Bypass -File $prepareReader
         if ($LASTEXITCODE -ne 0 -or -not (Test-ReaderRuntime)) {
-            throw 'Reader runtime 未能准备到固定版本；请先安装 64 位 Python 3.11 并确认构建机可访问 PyPI。'
+            throw 'Reader runtime 未能准备到固定版本；请确认构建机安装了 64 位 Python 3.10 或更高版本（推荐 3.11），并可访问 PyPI。'
         }
         Write-Step 'OK' ('Reader runtime ' + $requiredReaderVersion + ' 已准备')
     }
@@ -232,7 +232,7 @@ try {
         ('  powershell -NoProfile -ExecutionPolicy Bypass -File Install-FromPackage.ps1 -PackageZip "' + (Split-Path -Leaf $zipPath) + '" -RunSetup'),
         '',
         '脚本会校验哈希、解压到 %LOCALAPPDATA%\Programs\WeChatAiCopilot，再自动准备数据库、只读组件与桌面快捷方式。',
-        '安装包已内含固定版 Reader runtime 和 Agent 安装手册；目标电脑仍需 Python 3.11、PostgreSQL 18。',
+        '安装包已内含固定版 Reader runtime 和 Agent 安装手册；目标电脑需要 64 位 Python 3.10+（推荐 3.11）与 PostgreSQL 18。',
         '之后日常只需双击桌面上的「启动正式项目」。软件只读微信，不会代你发送消息。',
         '未签名安装包在陌生电脑上会先出现 SmartScreen 提示，详见 docs\operations\Release_and_Upgrade.md。'
     ) -join [Environment]::NewLine

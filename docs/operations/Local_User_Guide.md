@@ -12,7 +12,7 @@
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./Install-FromPackage.ps1 -PackageZip "./WeChatAiCopilot-<版本>-win-x64.zip" -RunSetup
 ~~~
 
-发布包自带自包含应用和固定版 Reader runtime。Setup 会通过 winget 安装缺少的 PostgreSQL 18 与 64 位 Python 3.11。PostgreSQL 是机器范围安装，Windows 可能要求你本人批准 UAC；没有管理员权限或不批准时请联系维护者。接收机不需要 .NET SDK。哈希或清单核对失败时停止，不要跳过。
+发布包自带自包含应用和固定版 Reader 模块。Setup 会通过 winget 安装缺少的 PostgreSQL 18 与推荐版 Python 3.11；已安装的其他 64 位 Python 3.10+ 会先通过实际依赖导入检查，必要时尝试重新准备依赖。PostgreSQL 是机器范围安装，Windows 可能要求你本人批准 UAC；没有管理员权限或不批准时请联系维护者。接收机不需要 .NET SDK。哈希或清单核对失败时停止，不要跳过。
 
 ## 启动
 
@@ -43,7 +43,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./Install-FromPackage.ps
 
 正式启动器会设置产品 Agent 使用本机 Codex CLI。没有 CLI 或没有登录时，工作区与 Reader 仍可运行，但 AI 建议和咨询不可用。
 
-需要 AI 功能时，按[OpenAI 官方 Codex CLI Windows 安装说明](https://github.com/openai/codex#quickstart)安装，并由你本人完成 codex login。不要把认证文件、API key 或 token 发给别人。安装后在新的 PowerShell 检查 codex --version 和 codex login status。
+需要 AI 功能时，按[OpenAI 官方 Codex CLI Windows 安装说明](https://github.com/openai/codex#quickstart)安装，并由你本人完成 codex login。程序不要求固定 Codex CLI 版本；安装后在新的 PowerShell 查看 codex --version 和 codex login status，再通过一次实际请求确认兼容。不要把认证文件、API key 或 token 发给别人。
 
 产品用户明确请求建议或咨询后，当前获准会话的必要上下文会交给你登录的 Codex CLI/OpenAI 服务处理。部署助手不得在未获你明确同意时用真实会话做 AI 冒烟。程序不会代替你向微信发送消息。
 

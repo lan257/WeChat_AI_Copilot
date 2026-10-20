@@ -10,6 +10,7 @@ $productRoot = Split-Path -Parent $PSScriptRoot
 $apiProject = Join-Path $productRoot 'src\WeChatAiCopilot.Api'
 $readerRoot = Join-Path $productRoot 'src\WeChatAiCopilot.Reader'
 $readerScript = Join-Path $readerRoot 'reader.py'
+. (Join-Path $readerRoot 'ReaderRuntime.ps1')
 $stateRoot = Join-Path $env:LOCALAPPDATA 'WeChatAiCopilot\Formal'
 $readerSettingsRoot = Join-Path $env:LOCALAPPDATA 'WeChatAiCopilot\Reader'
 $scopePath = Join-Path $stateRoot 'scope.json'
@@ -108,39 +109,22 @@ function Protect-LocalText([string] $value) {
     return ConvertFrom-SecureString -SecureString $secure
 }
 
-function Test-ReaderPython311([string] $pythonPath) {
-    if (-not (Test-Path -LiteralPath $pythonPath -PathType Leaf)) { return $false }
-    try {
-        & $pythonPath '-I' '-c' 'import sys,struct; sys.exit(0 if sys.version_info[:2] == (3, 11) and struct.calcsize("P") == 8 else 1)' *> $null
-        return $LASTEXITCODE -eq 0
+function Resolve-ReaderPython {
+    $candidates = @(Get-ReaderPythonCandidates)
+    if ($candidates.Count -eq 0) {
+        throw '未找到可用的 64 位 Python 3.10 或更高版本；请安装 Python 3.11（推荐）或其他 3.10+ 版本，再运行 Setup。尚未初始化本机数据库。'
     }
-    catch { return $false }
+    foreach ($candidate in $candidates) {
+        if (Test-ReaderRuntimeCompatibility $candidate.Path $readerRoot) { return $candidate.Path }
+    }
+    $versions = ($candidates | ForEach-Object { $_.Version }) -join ', '
+    throw ('已检测 Python ' + $versions + '，但均无法加载 Reader 随包本机依赖。请运行 scripts\Setup-TrialMachine.ps1 让 Setup 尝试按当前版本重建依赖；若无法访问 PyPI，可安装 Python 3.11（推荐）后重试。尚未初始化本机数据库。')
 }
 
-function Resolve-ReaderPython311 {
-    $launcher = Get-Command py.exe -ErrorAction SilentlyContinue
-    if ($launcher) {
-        try {
-            $output = @(& $launcher.Source '-3.11' '-c' 'import sys; print(sys.executable)' 2>$null)
-            $exitCode = $LASTEXITCODE
-            if ($exitCode -eq 0 -and $output.Count -gt 0) {
-                $candidate = ([string]$output[-1]).Trim()
-                if (Test-ReaderPython311 $candidate) { return $candidate }
-            }
-        }
-        catch { }
-    }
-
-    $candidates = @(
-        (Join-Path $env:LOCALAPPDATA 'Programs\Python\Python311\python.exe'),
-        (Join-Path $env:ProgramFiles 'Python311\python.exe'),
-        'C:\Python311\python.exe'
-    ) | Select-Object -Unique
-    foreach ($candidate in $candidates) {
-        if (Test-ReaderPython311 $candidate) { return $candidate }
-    }
-
-    throw '未找到可运行已准备 Reader 组件的 Python 3.11。请确认已为当前 Windows 用户安装 Python 3.11 后再次启动；完成此项检查前不会初始化本机数据库。'
+function Get-RunningWeChatProcess {
+    return Get-Process -Name @('Weixin', 'WeChat', '微信') -ErrorAction SilentlyContinue |
+        Sort-Object -Property WorkingSet64 -Descending |
+        Select-Object -First 1
 }
 
 function Get-AppSourceNewerThan([string] $artifactPath) {
@@ -271,7 +255,7 @@ function Get-ApprovedLocalScope([string] $pythonExe) {
         if ($savedFingerprint -eq $expectedFingerprint) { return $existingScope }
     }
 
-    $wechatProcess = Get-Process -Name 'Weixin' -ErrorAction SilentlyContinue | Select-Object -First 1
+    $wechatProcess = Get-RunningWeChatProcess
     if (-not $wechatProcess) {
         throw '请先打开并登录微信，然后重新启动正式项目以确认所选联系人。'
     }
@@ -803,11 +787,11 @@ try {
     Set-PrivateDirectoryAcl $stateRoot
     Set-StartupStage '正在读取已授权会话配置…'
     Set-StartupStage '正在检查 Reader 运行环境…'
-    $pythonExe = Resolve-ReaderPython311
     $readerRuntime = Join-Path $readerRoot '.runtime\package\wechatauto\db.py'
     if (-not (Test-Path -LiteralPath $readerRuntime)) {
         throw '本机还没有准备好只读采集组件。请先运行 scripts\Setup-TrialMachine.ps1（或 scripts\..\src\WeChatAiCopilot.Reader\prepare-reader.ps1）准备后再启动。'
     }
+    $pythonExe = Resolve-ReaderPython
 
     Set-StartupStage '正在确认本机授权会话…'
     $scope = Get-ApprovedLocalScope $pythonExe
@@ -833,7 +817,7 @@ try {
     Set-StartupStage '正在准备本机数据库…'
     Ensure-LocalDatabase $bin $secrets
 
-    $wechatProcess = Get-Process -Name 'Weixin' -ErrorAction SilentlyContinue | Select-Object -First 1
+    $wechatProcess = Get-RunningWeChatProcess
     if (-not $wechatProcess) {
         $wechatPath = [string]$scope.wechatExecutablePath
         if (-not $wechatPath -or -not (Test-Path -LiteralPath $wechatPath)) { throw 'Open and sign in to the WeChat desktop app, then start the formal project again.' }

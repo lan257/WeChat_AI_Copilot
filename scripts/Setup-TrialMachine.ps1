@@ -22,6 +22,7 @@ $stateRoot = Join-Path $env:LOCALAPPDATA 'WeChatAiCopilot\Formal'
 $setupLog = Join-Path $stateRoot 'setup.log'
 $requiredReaderVersion = '1.2.7.0'
 $results = @()
+. (Join-Path $readerRoot 'ReaderRuntime.ps1')
 
 function Step([string] $name, [string] $state, [string] $detail) {
     $script:results += [pscustomobject]@{ Step = $name; State = $state; Detail = $detail }
@@ -42,7 +43,7 @@ function Get-Winget {
     return $null
 }
 
-function Test-ReaderRuntime {
+function Test-ReaderRuntime([string] $pythonPath) {
     $modulePath = Join-Path $readerRoot '.runtime\package\wechatauto\db.py'
     $metadataPath = Join-Path $readerRoot '.runtime\package\UPSTREAM.txt'
     $cryptoPath = Join-Path $readerRoot '.runtime\deps\cryptography\__init__.py'
@@ -53,7 +54,8 @@ function Test-ReaderRuntime {
         -not (Test-Path -LiteralPath $zstandardPath -PathType Leaf)) { return $false }
     try {
         $metadata = [System.IO.File]::ReadAllText($metadataPath)
-        return $metadata.Contains('PyPI release: ' + $requiredReaderVersion)
+        return $metadata.Contains('PyPI release: ' + $requiredReaderVersion) -and
+            (Test-ReaderRuntimeCompatibility $pythonPath $readerRoot)
     } catch { return $false }
 }
 
@@ -96,51 +98,46 @@ else {
     Step 'PostgreSQL 18' 'OK' $pgBin
 }
 
-# --- 3. Python 3.11 (64-bit) -------------------------------------------------
-function Test-Python311 {
-    $probe = 'import sys,struct; print(struct.calcsize("P")*8, sys.version_info[1]); sys.exit(0 if sys.version_info[:2] == (3,11) and struct.calcsize("P") == 8 else 1)'
-    $launcher = Get-Command py.exe -ErrorAction SilentlyContinue
-    if ($launcher) {
-        try {
-            $out = & $launcher.Source '-3.11' '-I' '-c' $probe 2>$null
-            if ($LASTEXITCODE -eq 0 -and ($out -join '').Trim() -eq '64 11') { return $true }
-        } catch { }
-    }
-    foreach ($exe in @((Join-Path $env:LOCALAPPDATA 'Programs\Python\Python311\python.exe'), (Join-Path ${env:ProgramFiles} 'Python311\python.exe'))) {
-        if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { continue }
-        try {
-            $out = & $exe '-I' '-c' $probe 2>$null
-            if ($LASTEXITCODE -eq 0 -and ($out -join '').Trim() -eq '64 11') { return $true }
-        } catch { }
-    }
-    return $false
-}
-
-if (Test-Python311) { Step 'Python 3.11 (64 位)' 'OK' '' }
-else {
+# --- 3. Python (64-bit, 3.11 preferred) --------------------------------------
+$pythonCandidates = @(Get-ReaderPythonCandidates)
+if ($pythonCandidates.Count -eq 0) {
     $winget = Get-Winget
     if ($SkipInstallers -or -not $winget) {
-        Step 'Python 3.11 (64 位)' 'FAIL' '未安装，且无法自动安装'
-        throw '请安装 64 位 Python 3.11（winget install -e --id Python.Python.3.11）后重跑本脚本。'
+        Step 'Python 3.x (64 位)' 'FAIL' '未找到可用版本，且无法自动安装'
+        throw '未找到可用的 64 位 Python 3.10 或更高版本。请安装 Python 3.11（推荐）或其他 3.10+ 版本后重跑。'
     }
-    Step 'Python 3.11 (64 位)' 'RUN' '正在静默安装…'
+    Step 'Python 3.11 (推荐)' 'RUN' '未检测到可用 Python，正在静默安装…'
     & $winget install -e --id Python.Python.3.11 --accept-package-agreements --accept-source-agreements --silent 2>&1 | Out-File -FilePath $setupLog -Append -Encoding utf8
-    if (-not (Test-Python311)) { Step 'Python 3.11 (64 位)' 'FAIL' '安装后仍未找到，请重跑本脚本'; throw 'Python 3.11 安装未完成。' }
-    Step 'Python 3.11 (64 位)' 'OK' ''
+    $pythonCandidates = @(Get-ReaderPythonCandidates)
+    if ($pythonCandidates.Count -eq 0) { Step 'Python 3.x (64 位)' 'FAIL' '安装后仍未找到，请重跑本脚本'; throw 'Python 安装后仍未检测到可用的 64 位 Python 3.10 或更高版本。' }
 }
 
 # --- 4. read-only WeChat module ---------------------------------------------
 $readerModule = Join-Path $readerRoot '.runtime\package\wechatauto\db.py'
-if (Test-ReaderRuntime) {
-    Step '只读采集组件' 'OK' ('固定版本 ' + $requiredReaderVersion + ' 已就绪')
+$selectedPython = $null
+foreach ($candidate in $pythonCandidates) {
+    if (Test-ReaderRuntime $candidate.Path) { $selectedPython = $candidate; break }
+}
+if (-not $selectedPython) { $selectedPython = $pythonCandidates[0] }
+
+if (Test-ReaderRuntime $selectedPython.Path) {
+    Step ('Python ' + $selectedPython.Version + ' (64 位)') 'OK' 'Reader 依赖导入自检通过；3.11 为推荐版本'
+    Step '只读采集组件' 'OK' ('已校验版本 ' + $requiredReaderVersion + '，本机依赖可用')
 }
 else {
-    if (-not (Ask '需要下载只读采集组件（访问 PyPI），继续？')) { throw '未准备只读采集组件。' }
-    Step '只读采集组件' 'RUN' '正在下载并做只读完整性校验…'
-    & (Get-Command powershell.exe).Source -NoProfile -ExecutionPolicy Bypass -File (Join-Path $readerRoot 'prepare-reader.ps1') 2>&1 |
+    if (-not (Ask ('当前 Python ' + $selectedPython.Version + ' 无法直接加载随包 Reader 依赖；需要访问 PyPI 为此版本重新准备并自检，继续？'))) {
+        throw ('当前 Python ' + $selectedPython.Version + ' 与随包 Reader 本机依赖不兼容。可允许 Setup 访问 PyPI 重新准备，或安装 Python 3.11（推荐）后重跑。')
+    }
+    Step ('Python ' + $selectedPython.Version + ' Reader 兼容性') 'RUN' '正在准备依赖并做只读完整性与导入校验…'
+    $prepareScript = Join-Path $readerRoot 'prepare-reader.ps1'
+    & (Get-Command powershell.exe).Source -NoProfile -ExecutionPolicy Bypass -File $prepareScript -PythonPath $selectedPython.Path 2>&1 |
         Out-File -FilePath $setupLog -Append -Encoding utf8
-    if (-not (Test-ReaderRuntime)) { Step '只读采集组件' 'FAIL' '版本或文件校验未通过；见 setup.log'; throw '只读采集组件准备失败。' }
-    Step '只读采集组件' 'OK' ''
+    if ($LASTEXITCODE -ne 0 -or -not (Test-ReaderRuntime $selectedPython.Path)) {
+        Step '只读采集组件' 'FAIL' '依赖或导入校验未通过；见 setup.log'
+        throw ('Reader 无法在 Python ' + $selectedPython.Version + ' 下运行。请检查 setup.log 中 PyPI/依赖错误；可改用 Python 3.11（推荐）后重试。')
+    }
+    Step ('Python ' + $selectedPython.Version + ' (64 位)') 'OK' 'Reader 依赖导入自检通过'
+    Step '只读采集组件' 'OK' ('已校验版本 ' + $requiredReaderVersion)
 }
 
 # --- 5. the app itself: prebuilt, or build it once here ---------------------

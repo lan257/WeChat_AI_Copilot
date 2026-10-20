@@ -54,9 +54,12 @@ Get-NetTCPConnection -State Listen -LocalPort 5080, 55432 -ErrorAction SilentlyC
 继续条件：
 
 - 64 位 Windows 10/11 和 Windows PowerShell 5.1。用当前用户运行，不要依赖 PowerShell 7 的特有语法。
-- 若 PostgreSQL 18 或 64 位 Python 3.11 缺失，安装脚本会通过 winget 安装；因此 winget/App Installer 和可用的 Windows 软件源必须存在。
-- 发布包包含自包含 .NET 应用和固定版 Reader runtime，接收电脑不需要 .NET SDK 或 PyPI 下载。PostgreSQL、Python 缺失时仍需通过 winget 安装。
-- 微信桌面版已安装并由使用者登录、停留在聊天窗口。Weixin 进程存在不代表已登录，必须由使用者确认。
+- PostgreSQL 18 是当前交付包验证的数据库版本。若缺失，安装脚本通过 winget 安装。
+- Reader 支持 64 位 Python 3.10 或更高版本，推荐 3.11。Setup 会先用实际导入探测随包原生依赖；若 ABI 不兼容，会询问是否从 PyPI 为检测到的 Python 重新准备依赖。没有可用 Python 时会通过 winget 安装推荐的 3.11。
+- Reader 上游模块 `1.2.7.0` 是产品为发送者身份解析修复所锁定并校验的内部依赖版本；它不会限制用户电脑安装的 Python、Codex CLI 或微信客户端版本。
+- 发布包包含自包含 .NET 应用和 Reader runtime，接收电脑不需要 .NET SDK。通常也不需要 PyPI；只有目标机 Python 与随包本机扩展 ABI 不匹配时，才需要 PyPI 重新准备。
+- 已安装并由使用者登录的官方 Windows 微信桌面版，停留在聊天窗口。产品不按微信版本号硬拦截；Reader 会尝试发现和打开当前账号的本机数据，实际格式不兼容时报告错误。Weixin、WeChat 或微信进程名均会被识别；进程存在不代表已登录，必须由使用者确认。
+- 需要产品内置 AI 时，使用官方 Codex CLI。程序不设固定 CLI 版本号；安装后检查命令、登录状态和一次实际请求，遇到不兼容错误再提示升级。
 - 端口 5080 或 55432 若已被占用，先查明是否属于本产品；不得结束不明进程。
 - 如果 %LOCALAPPDATA%/WeChatAiCopilot 已经存在，这不是全新环境。先询问使用者是升级还是沿用；不删除、覆盖或搬动其中任何文件。
 - 若 Programs/WeChatAiCopilot 已存在，先确认是否为本产品旧版；安装会镜像替换该程序目录，移除目录内不属于新包的文件。
@@ -65,7 +68,7 @@ Get-NetTCPConnection -State Listen -LocalPort 5080, 55432 -ErrorAction SilentlyC
 
 ## 3. 安装发布包
 
-执行前告知使用者：安装脚本会核对 zip 与清单；缺少时会通过 winget 安装 PostgreSQL 18 和 Python 3.11，并更新程序目录。PostgreSQL 是机器范围安装，Windows 可能弹出 UAC，需使用者本人批准；Agent 不处理密码。聊天数据库位于另一个用户数据目录。
+执行前告知使用者：安装脚本会核对 zip 与清单；缺少时会通过 winget 安装 PostgreSQL 18 和推荐版 Python 3.11，并更新程序目录。已安装的其他 64 位 Python 3.10+ 会先被尝试；只有实际导入自检失败，才需要重新准备依赖或改用推荐版本。PostgreSQL 是机器范围安装，Windows 可能弹出 UAC，需使用者本人批准；Agent 不处理密码。聊天数据库位于另一个用户数据目录。
 
 在包含四个交付文件的目录运行：
 
@@ -73,9 +76,9 @@ Get-NetTCPConnection -State Listen -LocalPort 5080, 55432 -ErrorAction SilentlyC
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./Install-FromPackage.ps1 -PackageZip "./WeChatAiCopilot-<版本>-win-x64.zip" -RunSetup
 ~~~
 
-不要使用 -SkipHashCheck。等待安装完成，确认输出中出现 SHA-256 一致、清单核对通过、固定版 Reader runtime 就绪，以及最后的“准备完成。”。安装输出可能出现 [RUN]、[SKIP] 或 [WARN]；不是每一行都应以 [OK] 开头。
+不要使用 -SkipHashCheck。等待安装完成，确认输出中出现 SHA-256 一致、清单核对通过、Reader 依赖导入自检通过，以及最后的“准备完成。”。安装输出可能出现 [RUN]、[SKIP] 或 [WARN]；不是每一行都应以 [OK] 开头。
 
-安装会把程序放入当前用户的 %LOCALAPPDATA%/Programs/WeChatAiCopilot。首次安装不需要 .NET SDK；Setup 会检查 64 位 Python 3.11、Reader runtime 1.2.7.0，并准备本机运行目录。如果提示固定版 runtime 缺失或哈希不符，停止并请维护者重新生成发布包。
+安装会把程序放入当前用户的 %LOCALAPPDATA%/Programs/WeChatAiCopilot。首次安装不需要 .NET SDK；Setup 会检查 64 位 Python 3.10+ 是否能导入 Reader runtime 1.2.7.0，并准备本机运行目录。Python 版本不是固定门槛：3.11 是推荐值，其他版本需通过依赖导入检查。若提示 Reader 文件缺失或哈希不符，停止并请维护者重新生成发布包。
 
 ## 4. 准备产品内置 AI Agent（仅在使用者需要 AI 建议时）
 
@@ -96,14 +99,14 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "irm https://chatgpt.
 
 不安装第三方改包，不猜测 npm 平台包版本，不索取或粘贴 API key。安装器若要求管理员权限、被安全软件拦截或网络不可用，暂停并报告。
 
-3. 安装后打开新的普通 PowerShell 窗口，检查：
+3. 安装后打开新的普通 PowerShell 窗口，检查 CLI 版本（仅用于诊断）和登录状态：
 
 ~~~powershell
 codex --version
 codex login status
 ~~~
 
-未登录时运行 codex login，由使用者在浏览器中完成账号登录。Agent 不读取或记录认证文件、浏览器回调、token 或账户凭据。若命令不可用或登录状态不明确，不要把产品 Agent 标记为就绪。
+未登录时运行 codex login，由使用者在浏览器中完成账号登录。程序不硬性要求某个 Codex CLI 版本；之后还需在第 7 节验证实际请求。若当前 CLI 命令、登录或协议不兼容，先记录错误码，再按官方渠道更新。Agent 不读取或记录认证文件、浏览器回调、token 或账户凭据。若命令不可用或登录状态不明确，不要把产品 Agent 标记为就绪。
 
 4. 若使用者不愿把获准会话的必要上下文交给其 Codex/OpenAI 服务，不发起真实建议请求；可以继续完成本机工作区与 Reader 验收，并明确注明“产品内置 AI Agent 未验证”。需要代理时只采用使用者提供的代理地址；正式启动器的 network.json 代理只影响 AI CLI，不会修复 winget/Python 安装网络。
 
@@ -159,10 +162,10 @@ Get-NetTCPConnection -State Listen -LocalPort 5080, 55432 -ErrorAction SilentlyC
 |---|---|
 | zip SHA-256 不一致、清单不一致 | 立即停止；请维护者从可信来源重新提供四个文件。 |
 | winget 不存在或 PostgreSQL/Python 安装后仍未检测到 | 检查 App Installer、Windows 软件源与网络；不要提权或静默重复安装。 |
-| WECHAT_DATABASE_UNAVAILABLE | 让使用者确认桌面微信已登录且停在聊天窗口；普通权限重试一次。若微信由管理员启动，不要自动提权，先告知使用者。 |
+| WECHAT_DATABASE_UNAVAILABLE | 让使用者确认桌面微信已登录且停在聊天窗口；普通权限重试一次。若微信由管理员启动，不要自动提权，先告知使用者。若确认登录与权限无误，记录微信客户端版本，再尝试更新到官方当前稳定版；Reader 不绕过不兼容的数据库格式。 |
 | SELF_WXID_UNAVAILABLE、ACTIVE_ACCOUNT_MISMATCH | 停止，不改 scope 或数据库；确认微信当前账号与用户授权范围后反馈错误码。 |
 | READER_UPSTREAM_SENDER_RESOLUTION_UNAVAILABLE | 固定版 Reader runtime 未正确安装；从已核验的发布包重跑 Setup。不要使用短 ID 猜方向。 |
-| CODEX_CLI_START_FAILED | 确认 Codex CLI 在当前用户 PATH 中可运行并已登录；必要时检查 CODEX_CLI_AUTH_REQUIRED、CODEX_CLI_CONFIG_INVALID 或 CODEX_CLI_EXIT_NONZERO。 |
+| CODEX_CLI_START_FAILED | 确认 Codex CLI 在当前用户 PATH 中可运行并已登录；程序不要求固定 CLI 版本。若命令启动但协议不兼容，记录 `codex --version` 与错误码，再从官方渠道更新；必要时检查 CODEX_CLI_AUTH_REQUIRED、CODEX_CLI_CONFIG_INVALID 或 CODEX_CLI_EXIT_NONZERO。 |
 | CODEX_CLI_NETWORK_FAILED、RUNTIME_TIMEOUT | 先检查使用者提供的网络/代理和 Codex 登录状态；不得猜代理端口或转发聊天内容排障。 |
 | 端口占用 | 先确认进程归属；只有确认属于本项目时使用“知间 停止”，不强杀其他程序。 |
 
